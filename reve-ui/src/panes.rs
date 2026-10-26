@@ -1,3 +1,4 @@
+pub mod decompile;
 pub mod listing;
 pub mod project;
 pub mod symbols;

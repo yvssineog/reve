@@ -49,7 +49,7 @@ fn shifted(mut row: Row, by: u32) -> Row {
 
 // The Electron build's listing.
 #[rustfmt::skip]
-const TEMPLATE: &[Row] = &[
+pub const TEMPLATE: &[Row] = &[
     Signature("int main(int argc, char **argv)"),
     Label("main", None),
     code(0x00410c40, "7d 05 c6 14", "push", Plain("{r4, r5, r6, r7, r8, lr}"), None),

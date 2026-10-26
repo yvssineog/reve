@@ -1,4 +1,4 @@
-mod mock;
+pub(super) mod mock;
 
 use std::ops::Range;
 
@@ -11,19 +11,19 @@ use gpui_kit::*;
 use crate::palette::Palette;
 use mock::START;
 
-// The key context the listing's shortcuts are bound under.
-const CONTEXT: &str = "Listing";
+// The key context both code panes, listing and decompiler, bind their shortcuts under.
+pub const CONTEXT: &str = "Code";
 // Instructions a page key moves the cursor.
-const PAGE: isize = 24;
+pub const PAGE: isize = 24;
 // The height of every row.
-const ROW: Pixels = px(18.);
+pub const ROW: Pixels = px(18.);
 // Column widths, in 12px monospace characters: address 10, bytes 13, mnemonic 7,
 // operands 30. Plates, signatures and labels start on the mnemonic column.
 const ADDRESS: Pixels = px(72.);
 const BYTES: Pixels = px(94.);
 const MNEMONIC: Pixels = px(51.);
 const OPERANDS: Pixels = px(217.);
-const GUTTER: Pixels = px(12.);
+pub const GUTTER: Pixels = px(12.);
 
 actions!(listing, [HalfPageDown, HalfPageUp]);
 
@@ -74,11 +74,30 @@ pub enum Operands {
     External(&'static str),
 }
 
+impl Operands {
+    // The function called, here or in a library.
+    fn call(&self) -> Option<&'static str> {
+        match *self {
+            Operands::Plain(_) => None,
+            Operands::Call(name, _) | Operands::External(name) => Some(name),
+        }
+    }
+}
+
 // The end of an instruction's line.
 #[derive(Clone, Copy)]
 pub enum Eol {
     String(&'static str),
     Comment(&'static str),
+}
+
+// Where the cursor is, as the decompiler reads it.
+pub struct Spot {
+    pub address: u32,
+    pub function: &'static str,
+    // The cursor is on the function's first instruction.
+    pub entry: bool,
+    pub call: Option<&'static str>,
 }
 
 // The program's disassembly, with a cursor on one instruction.
@@ -130,13 +149,13 @@ impl Listing {
     }
 
     // Moves the cursor `by` instructions, scrolling no more than needed.
-    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+    pub fn step(&mut self, by: isize, cx: &mut Context<Self>) {
         self.jump(self.moved(by), ScrollStrategy::Nearest, cx);
     }
 
     // Vim's ctrl-d and ctrl-u: the view and the cursor move half a screen together, so the
     // cursor keeps its place on screen.
-    fn half_page(&mut self, direction: isize, cx: &mut Context<Self>) {
+    pub fn half_page(&mut self, direction: isize, cx: &mut Context<Self>) {
         let view = self.scroll.0.borrow().base_handle.clone();
         let half = (view.bounds().size.height / ROW / 2.).max(1.) as isize;
         let to = self.moved(direction * half);
@@ -147,7 +166,7 @@ impl Listing {
     }
 
     // Follows the call under the cursor to the function's entry.
-    fn follow(&mut self, cx: &mut Context<Self>) {
+    pub fn follow(&mut self, cx: &mut Context<Self>) {
         if let Row::Code(Code {
             operands: Operands::Call(_, address),
             ..
@@ -156,6 +175,22 @@ impl Listing {
         {
             self.jump(ix, ScrollStrategy::Center, cx);
         }
+    }
+
+    pub fn spot(&self) -> Spot {
+        spot(&self.rows, self.cursor)
+    }
+
+    // Puts the cursor on the first instruction in its function that calls `name`.
+    pub fn pick_call(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        let (_, mut rows) = function(&self.rows, self.cursor);
+        let Some(ix) = rows.find(
+            |&ix| matches!(self.rows[ix], Row::Code(code) if code.operands.call() == Some(name)),
+        ) else {
+            return false;
+        };
+        self.jump(ix, ScrollStrategy::Nearest, cx);
+        true
     }
 
     // Row `ix`, inset by the gutter, which will hold bookmarks.
@@ -304,6 +339,40 @@ fn entry(instructions: &[(u32, usize)], address: u32) -> Option<usize> {
         .binary_search_by_key(&address, |&(address, _)| address)
         .ok()?;
     Some(instructions[at].1)
+}
+
+// The function holding row `ix`: its name, and its rows from its label to the next gap.
+fn function(rows: &[Row], ix: usize) -> (&'static str, Range<usize>) {
+    let (start, name) = rows[..=ix]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(ix, row)| match row {
+            Row::Label(name, _) => Some((ix, *name)),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let end = rows[ix..]
+        .iter()
+        .position(|row| matches!(row, Row::Gap))
+        .map_or(rows.len(), |len| ix + len);
+    (name, start..end)
+}
+
+// Where the instruction at row `cursor` sits in its function.
+pub(super) fn spot(rows: &[Row], cursor: usize) -> Spot {
+    let Row::Code(code) = rows[cursor] else {
+        unreachable!("the cursor is always on an instruction");
+    };
+    let (function, range) = function(rows, cursor);
+    Spot {
+        address: code.address,
+        function,
+        entry: !rows[range.start..cursor]
+            .iter()
+            .any(|row| matches!(row, Row::Code(_))),
+        call: code.operands.call(),
+    }
 }
 
 // A header row's text, started on the mnemonic column and cut with an ellipsis.

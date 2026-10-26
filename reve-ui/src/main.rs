@@ -11,6 +11,7 @@ use gpui_kit::component::{ActiveTheme as _, Theme, TitleBar, v_flex};
 use gpui_kit::*;
 
 use palette::Palette;
+use panes::decompile::Decompile;
 use panes::listing::Listing;
 use panes::{pane, project, symbols};
 
@@ -73,12 +74,14 @@ struct Reve {
     project: Entity<TreeState>,
     symbols: Entity<TreeState>,
     listing: Entity<Listing>,
+    decompile: Entity<Decompile>,
 }
 
 impl Reve {
     // Opens with the listing focused, so its keys work without a click first.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let listing = cx.new(Listing::new);
+        let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
         window.focus(&listing.focus_handle(cx), cx);
         Self {
             focus: cx.focus_handle(),
@@ -87,6 +90,7 @@ impl Reve {
             project: cx.new(project::state),
             symbols: cx.new(symbols::state),
             listing,
+            decompile,
         }
     }
 }
@@ -142,13 +146,16 @@ impl Render for Reve {
                                 pane(theme, "cpu", palette.mnemonic, "Listing", None)
                                     .child(self.listing.clone()),
                             )
-                            .child(pane(
-                                theme,
-                                "brackets-curly",
-                                palette.string,
-                                "Decompile",
-                                None,
-                            )),
+                            .child(
+                                pane(
+                                    theme,
+                                    "brackets-curly",
+                                    palette.string,
+                                    "Decompile",
+                                    self.decompile.read(cx).name(),
+                                )
+                                .child(self.decompile.clone()),
+                            ),
                     ),
                 )
                 .child(

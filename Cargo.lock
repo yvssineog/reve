@@ -5376,6 +5376,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "reve-model",
 ]
 
 [[package]]
