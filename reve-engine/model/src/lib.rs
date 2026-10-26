@@ -1,4 +1,4 @@
-//! Shared data types exchanged by the Rêve engine and user interface.
+//! Shared data types exchanged by the rêve engine and user interface.
 
 /// An address in the analyzed program's address space.
 ///

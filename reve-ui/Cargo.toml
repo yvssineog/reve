@@ -9,5 +9,5 @@ gpui-kit = "0.8.1"
 reve-model = { path = "../reve-engine/model" }
 
 [[bin]]
-name = "Rêve"
+name = "rêve"
 path = "src/main.rs"
