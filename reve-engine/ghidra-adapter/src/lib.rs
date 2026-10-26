@@ -23,8 +23,15 @@ pub mod error;
 /// Read Ghidra's protobuf export and convert it to the shared Rust model.
 pub mod export;
 
+/// High-level Ghidra analysis operation.
+pub mod orchestrator;
+
 /// Per-analysis temporary project and export files.
 pub(crate) mod job;
 
 /// Launch and wait for Ghidra Headless.
 pub(crate) mod headless;
+
+pub use config::GhidraConfig;
+pub use error::ParserError;
+pub use orchestrator::GhidraAdapter;
