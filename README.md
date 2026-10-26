@@ -7,4 +7,25 @@ Open-source reverse engineering application.
 
 Initial target: Linux ELF x86-64. Windows PE support may follow.
 
-use `cargo run` to run the gpui-kit application.
+## Development tools
+
+The parser uses **Ghidra 12.2** and **Eclipse Temurin JDK 25 (64-bit)**. 
+
+From the repository root, run:
+
+```powershell
+python scripts/setup_tools.py
+```
+
+It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`.
+
+The headless launcher is installed at:
+
+- Windows: `.tools/ghidra/ghidra_12.2_PUBLIC/support/analyzeHeadless.bat`
+- Linux/macOS: `.tools/ghidra/ghidra_12.2_PUBLIC/support/analyzeHeadless`
+
+The bundled JDK is under `.tools/java/temurin-25/`. The parser can use these paths directly; no system-wide Java installation is required.
+
+## Run the UI
+
+Run `cargo run -p reve-ui` to start the GPUI application.
