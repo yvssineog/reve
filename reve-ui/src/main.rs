@@ -1,11 +1,13 @@
 mod header;
 mod project;
+mod symbols;
 
 use std::borrow::Cow;
 
 use gpui_kit::assets::Assets;
+use gpui_kit::component::list::ListItem;
 use gpui_kit::component::resizable::{ResizablePanel, h_resizable, resizable_panel, v_resizable};
-use gpui_kit::component::tree::{TreeState, tree};
+use gpui_kit::component::tree::{TreeEntry, TreeState, tree};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, TitleBar, h_flex, v_flex,
 };
@@ -33,6 +35,7 @@ const ICONS: &[(&str, &[u8])] = icons![
     "cpu-duotone",
     "brackets-curly-duotone",
     "function-duotone",
+    "sign-in-duotone",
     "sun",
     "moon",
     "panel-open",
@@ -67,6 +70,7 @@ struct Reve {
     sidebar_open: bool,
     bottom_open: bool,
     project: Entity<TreeState>,
+    symbols: Entity<TreeState>,
 }
 
 impl Reve {
@@ -78,6 +82,7 @@ impl Reve {
             sidebar_open: true,
             bottom_open: true,
             project: cx.new(project::state),
+            symbols: cx.new(symbols::state),
         }
     }
 }
@@ -111,13 +116,14 @@ impl Render for Reve {
                                 .px(px(6.)),
                         ),
                     )
-                    .child(pane(
-                        theme,
-                        "tree-structure",
-                        theme.magenta,
-                        "Symbol Tree",
-                        None,
-                    )),
+                    .child(
+                        pane(theme, "tree-structure", theme.magenta, "Symbol Tree", None).child(
+                            tree(&self.symbols, symbols::row)
+                                .flex_1()
+                                .min_h_0()
+                                .px(px(6.)),
+                        ),
+                    ),
             );
 
         // Listing beside Decompile over the Functions window, on the darker content tint.
@@ -206,6 +212,59 @@ fn pane(
                     .child(detail)
             })),
     )
+}
+
+// A compact tree row: indent, caret, icon in its hue, the label, then an optional detail on
+// the right. When narrow the label gives way first, cut with an ellipsis.
+fn tree_row(
+    ix: usize,
+    entry: &TreeEntry,
+    icon: &str,
+    hue: Hsla,
+    detail: Option<&'static str>,
+    cx: &App,
+) -> ListItem {
+    let theme = cx.theme();
+    let caret = match (entry.is_folder(), entry.is_expanded()) {
+        (false, _) => None,
+        (true, false) => Some("caret-right"),
+        (true, true) => Some("caret-down"),
+    };
+
+    ListItem::new(ix)
+        .h(px(24.))
+        .py_0()
+        .px(px(6.))
+        .rounded(px(6.))
+        .text_size(px(13.))
+        .child(
+            h_flex()
+                .gap_1()
+                .pl(px(16.) * entry.depth() as f32)
+                // Leaves keep an empty caret slot so their icons line up with folders'.
+                .child(div().flex_none().size(px(12.)).children(caret.map(|caret| {
+                    Icon::empty()
+                        .path(format!("icons/{caret}.svg"))
+                        .with_size(px(12.))
+                        .text_color(theme.muted_foreground)
+                })))
+                .child(
+                    Icon::empty()
+                        .path(format!("icons/{icon}.svg"))
+                        .with_size(px(14.))
+                        .text_color(hue),
+                )
+                .child(div().min_w_0().truncate().child(entry.item().label.clone()))
+                // Faint monospace at the label's size, so baselines line up.
+                .children(detail.map(|detail| {
+                    div()
+                        .ml_auto()
+                        .pl_2()
+                        .font_family(theme.mono_font_family.clone())
+                        .text_color(theme.muted_foreground.opacity(0.7))
+                        .child(detail)
+                })),
+        )
 }
 
 // A shortcut; "secondary" means Cmd on macOS and Ctrl elsewhere.

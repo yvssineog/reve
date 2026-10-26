@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
+use crate::tree_row;
+
+// TODO: the Ghidra adapter should classify each file (container, executable, library, script, text) instead of this hand-labelled table.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Binary,
@@ -69,48 +72,17 @@ fn items(dir: &str, paths: Vec<&'static str>) -> Vec<TreeItem> {
     folders.chain(files).collect()
 }
 
-// A compact row: indent, caret, icon, then the name, cut with an ellipsis when narrow.
+// Binaries stand out in cyan; folders and other files stay muted.
 pub fn row(ix: usize, entry: &TreeEntry, _: bool, _: &mut Window, cx: &mut App) -> ListItem {
     let theme = cx.theme();
-    let item = entry.item();
     let (icon, hue) = if entry.is_folder() {
         ("folder-simple-duotone", theme.muted_foreground)
-    } else if FILES.contains(&(&*item.id, Kind::Binary)) {
+    } else if FILES.contains(&(&*entry.item().id, Kind::Binary)) {
         ("binary-duotone", theme.cyan)
     } else {
         ("file-duotone", theme.muted_foreground)
     };
-    let caret = match (entry.is_folder(), entry.is_expanded()) {
-        (false, _) => None,
-        (true, false) => Some("caret-right"),
-        (true, true) => Some("caret-down"),
-    };
-
-    ListItem::new(ix)
-        .h(px(24.))
-        .py_0()
-        .px(px(6.))
-        .rounded(px(6.))
-        .text_size(px(13.))
-        .child(
-            h_flex()
-                .gap_1()
-                .pl(px(16.) * entry.depth() as f32)
-                // Files keep an empty caret slot so their icons line up with folders'.
-                .child(div().flex_none().size(px(12.)).children(caret.map(|caret| {
-                    Icon::empty()
-                        .path(format!("icons/{caret}.svg"))
-                        .with_size(px(12.))
-                        .text_color(theme.muted_foreground)
-                })))
-                .child(
-                    Icon::empty()
-                        .path(format!("icons/{icon}.svg"))
-                        .with_size(px(14.))
-                        .text_color(hue),
-                )
-                .child(div().min_w_0().truncate().child(item.label.clone())),
-        )
+    tree_row(ix, entry, icon, hue, None, cx)
 }
 
 #[cfg(test)]
