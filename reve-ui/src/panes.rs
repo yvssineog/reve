@@ -105,11 +105,14 @@ fn tree_row(
                         .text_color(hue),
                 )
                 .child(div().min_w_0().truncate().child(entry.item().label.clone()))
-                // Faint monospace at the label's size, so baselines line up.
+                // Faint monospace at the label's size, so baselines line up. Never wraps or
+                // shrinks; the label gives way instead.
                 .children(detail.map(|detail| {
                     div()
+                        .flex_none()
                         .ml_auto()
                         .pl_2()
+                        .whitespace_nowrap()
                         .font_family(theme.mono_font_family.clone())
                         .text_color(theme.muted_foreground.opacity(0.7))
                         .child(detail)

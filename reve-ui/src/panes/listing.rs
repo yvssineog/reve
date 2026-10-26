@@ -16,9 +16,10 @@ const CONTEXT: &str = "Code";
 const PAGE: isize = 24;
 // The height of every row.
 pub const ROW: Pixels = px(18.);
-// Column widths, in 12px monospace characters: address 10, bytes 13, mnemonic 7,
-// operands 30. Labels start on the mnemonic column.
-const ADDRESS: Pixels = px(72.);
+// One 12px monospace character.
+const CHAR: Pixels = px(7.2);
+// Column widths, in characters: address as long as the program's addresses plus 2, bytes 13,
+// mnemonic 7, operands 30. Labels start on the mnemonic column.
 const BYTES: Pixels = px(94.);
 const MNEMONIC: Pixels = px(51.);
 const OPERANDS: Pixels = px(217.);
@@ -78,6 +79,8 @@ pub struct Listing {
     instructions: Vec<(Address, usize)>,
     // A row index, always one of `instructions`.
     cursor: usize,
+    // Hex digits every address shows with, so the address column fits the longest.
+    digits: usize,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
 }
@@ -85,7 +88,8 @@ pub struct Listing {
 impl Listing {
     // Opens with the cursor on the first instruction.
     pub fn new(program: Program, cx: &mut Context<Self>) -> Self {
-        let rows = layout(&program);
+        let digits = digits(&program);
+        let rows = layout(&program, digits);
         let instructions = index(&program, &rows);
         let cursor = instructions.first().map_or(0, |&(_, row)| row);
         let scroll = UniformListScrollHandle::new();
@@ -96,8 +100,19 @@ impl Listing {
             instructions,
             cursor,
             scroll,
+            digits,
             focus: cx.focus_handle(),
         }
+    }
+
+    // The address column's width.
+    pub fn address_width(&self) -> Pixels {
+        CHAR * (self.digits + 2) as f32
+    }
+
+    // `address` in hex, padded like every address the listing shows.
+    pub fn hex(&self, address: Address) -> String {
+        hex(address, self.digits)
     }
 
     // Puts the cursor on row `ix` and scrolls it into view.
@@ -183,24 +198,26 @@ impl Listing {
                 .w_full()
                 .child(div().flex_1().h_px().bg(palette.hairline))
                 .into_any_element(),
-            Row::Label(function, xrefs) => header(h_flex().w_full().h(ROW).px(GUTTER))
-                .gap_4()
-                .child(
-                    div()
-                        .flex_none()
-                        .font_semibold()
-                        .text_color(palette.symbol)
-                        .child(self.program.functions[*function].name.clone()),
-                )
-                .children(xrefs.clone().map(|xrefs| {
-                    div()
-                        .ml_auto()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(palette.fg_4)
-                        .child(xrefs)
-                }))
-                .into_any_element(),
+            Row::Label(function, xrefs) => {
+                header(h_flex().w_full().h(ROW).px(GUTTER), self.address_width())
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_semibold()
+                            .text_color(palette.symbol)
+                            .child(self.program.functions[*function].name.clone()),
+                    )
+                    .children(xrefs.clone().map(|xrefs| {
+                        div()
+                            .ml_auto()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(palette.fg_4)
+                            .child(xrefs)
+                    }))
+                    .into_any_element()
+            }
             Row::Code(function, instruction) => {
                 let instruction = &self.program.functions[*function].instructions[*instruction];
                 self.instruction(ix, instruction, palette, cx)
@@ -239,8 +256,8 @@ impl Listing {
                 }
             })
             .child(cell(
-                ADDRESS,
-                format!("{:08x}", instruction.address.0),
+                self.address_width(),
+                hex(instruction.address, self.digits),
                 palette.fg_3,
             ))
             .child(cell(BYTES, bytes.join(" "), palette.fg_4))
@@ -306,8 +323,8 @@ impl Render for Listing {
 }
 
 // Each function's label over its instructions, a gap between functions.
-fn layout(program: &Program) -> Vec<Row> {
-    let mut xrefs = xrefs(program);
+fn layout(program: &Program, digits: usize) -> Vec<Row> {
+    let mut xrefs = xrefs(program, digits);
     let mut rows = Vec::new();
     for (ix, function) in program.functions.iter().enumerate() {
         if ix > 0 {
@@ -320,12 +337,12 @@ fn layout(program: &Program) -> Vec<Row> {
 }
 
 // Who calls each function, by its entry: `XREF[n]: caller:address(c), ...`, in address order.
-fn xrefs(program: &Program) -> HashMap<Address, SharedString> {
+fn xrefs(program: &Program, digits: usize) -> HashMap<Address, SharedString> {
     let mut callers: HashMap<Address, Vec<String>> = HashMap::new();
     for function in &program.functions {
         for instruction in &function.instructions {
             if let Some(callee) = callee(program, instruction) {
-                let caller = format!("{}:{:08x}(c)", function.name, instruction.address.0);
+                let caller = format!("{}:{}(c)", function.name, hex(instruction.address, digits));
                 callers.entry(callee.entry).or_default().push(caller);
             }
         }
@@ -362,16 +379,28 @@ fn row_at(instructions: &[(Address, usize)], address: Address) -> Option<usize> 
 }
 
 // A header row's text, started on the mnemonic column and cut with an ellipsis.
-fn header(row: Div) -> Div {
-    row.pl(GUTTER + ADDRESS + BYTES).truncate()
+fn header(row: Div, address_width: Pixels) -> Div {
+    row.pl(GUTTER + address_width + BYTES).truncate()
 }
 
-// A fixed-width column, its text cut at the edge.
+// Hex digits for the program's highest instruction address, at least 8.
+fn digits(program: &Program) -> usize {
+    let instructions = program.functions.iter().flat_map(|f| &f.instructions);
+    let highest = instructions.map(|i| i.address.0).max().unwrap_or(0);
+    format!("{highest:x}").len().max(8)
+}
+
+// `address` in hex, zero-padded to `digits`.
+fn hex(address: Address, digits: usize) -> String {
+    format!("{:0digits$x}", address.0)
+}
+
+// A fixed-width column on one line, its text cut with an ellipsis at the edge.
 fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
     div()
         .flex_none()
         .w(width)
-        .overflow_hidden()
+        .truncate()
         .text_color(hue)
         .child(text.into())
 }
@@ -380,7 +409,7 @@ fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
 mod tests {
     use reve_model::{Address, Function, Instruction, Program};
 
-    use super::{callee, xrefs};
+    use super::{callee, digits, hex, xrefs};
 
     fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
         let instructions: Vec<_> = (0..)
@@ -433,11 +462,21 @@ mod tests {
 
     #[test]
     fn xrefs_name_callers() {
-        let xrefs = xrefs(&program());
+        let xrefs = xrefs(&program(), 8);
         assert_eq!(
             &*xrefs[&Address(0x1010)],
             "XREF[2]: main:00001000(c), main:00001004(c)"
         );
         assert_eq!(xrefs.len(), 1, "nothing calls main or leaf");
+    }
+
+    #[test]
+    fn addresses_pad_to_the_longest() {
+        let mut program = program();
+        assert_eq!(digits(&program), 8, "never fewer than 8");
+        program.functions[2].instructions[0].address = Address(0xffff_8000_0000_1020);
+        let digits = digits(&program);
+        assert_eq!(digits, 16);
+        assert_eq!(hex(Address(0x1000), digits), "0000000000001000");
     }
 }

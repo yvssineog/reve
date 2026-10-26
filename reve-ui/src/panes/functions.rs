@@ -11,9 +11,8 @@ use crate::palette::Palette;
 
 // The height of every row.
 const ROW: Pixels = px(22.);
-// Fixed column widths: name, location (8 hex digits plus 2), size.
+// Fixed column widths: name and size. Location is the listing's address column.
 const NAME: Pixels = px(220.);
-const LOCATION: Pixels = px(72.);
 const SIZE: Pixels = px(48.);
 
 // Every function in address order with its location, signature and size. Pressing one takes
@@ -67,6 +66,7 @@ impl Functions {
         palette: &Palette,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let listing = self.listing.read(cx);
         let entry = function.entry;
         let name = if function.name.starts_with("FUN_") {
             palette.fg_3
@@ -80,6 +80,7 @@ impl Functions {
             .unwrap_or_default();
         h_flex()
             .id(ix)
+            .w_full()
             .h(ROW)
             .px(GUTTER)
             .gap_4()
@@ -91,7 +92,11 @@ impl Functions {
                 }
             })
             .child(cell(NAME, function.name.clone(), name))
-            .child(cell(LOCATION, format!("{:08x}", entry.0), palette.fg_3))
+            .child(cell(
+                listing.address_width(),
+                listing.hex(entry),
+                palette.fg_3,
+            ))
             .child(div().flex_1().min_w_0().truncate().child(signature))
             .child(cell(SIZE, function.size.to_string(), palette.fg_3).text_right())
             .on_mouse_down(
@@ -105,7 +110,8 @@ impl Functions {
 impl Render for Functions {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::of(cx);
-        let count = self.listing.read(cx).program().functions.len();
+        let listing = self.listing.read(cx);
+        let (count, location) = (listing.program().functions.len(), listing.address_width());
         let column = |width, label| div().flex_none().w(width).child(label);
 
         v_flex()
@@ -122,7 +128,7 @@ impl Render for Functions {
                     .text_size(px(11.5))
                     .text_color(palette.fg_3)
                     .child(column(NAME, "Name"))
-                    .child(column(LOCATION, "Location"))
+                    .child(column(location, "Location"))
                     .child(div().flex_1().child("Signature"))
                     .child(column(SIZE, "Size").text_right()),
             )
