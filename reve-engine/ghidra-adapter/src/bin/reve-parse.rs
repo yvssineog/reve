@@ -9,7 +9,7 @@ use std::{
 };
 
 use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig};
-use reve_model::Program;
+use reve_model::{DecompilationStatus, Program};
 
 fn main() -> ExitCode {
     match run(std::env::args_os().skip(1)) {
@@ -51,6 +51,24 @@ fn write_summary(program: &Program, mut output: impl Write) -> io::Result<()> {
         program.architecture, program.address_size_bits
     )?;
     writeln!(output, "Functions: {}", program.functions.len())?;
+    let functions_with_pseudocode = program
+        .functions
+        .iter()
+        .filter(|function| {
+            function
+                .decompilation
+                .as_ref()
+                .is_some_and(|decompilation| {
+                    decompilation.status == DecompilationStatus::Succeeded
+                        && !decompilation.c_code.trim().is_empty()
+                })
+        })
+        .count();
+    writeln!(
+        output,
+        "Functions with C pseudocode: {functions_with_pseudocode}/{}",
+        program.functions.len()
+    )?;
 
     const DISPLAY_LIMIT: usize = 10;
     for function in program.functions.iter().take(DISPLAY_LIMIT) {
@@ -137,8 +155,64 @@ mod tests {
         let summary = String::from_utf8(summary).unwrap();
         assert!(summary.contains("Program: sample.elf"));
         assert!(summary.contains("Functions: 12"));
+        assert!(summary.contains("Functions with C pseudocode: 0/12"));
         assert!(summary.contains("fn_9"));
         assert!(!summary.contains("fn_10"));
         assert!(summary.contains("... and 2 more"));
+    }
+
+    #[test]
+    fn summary_counts_only_successful_nonempty_pseudocode() {
+        use reve_model::{Decompilation, Function};
+
+        let function = |name: &str, decompilation| Function {
+            name: name.into(),
+            entry: Address(0),
+            size: 0,
+            instructions: Vec::new(),
+            decompilation,
+        };
+        let program = Program {
+            name: "sample.elf".into(),
+            format: "ELF".into(),
+            architecture: "x86:LE:64:default".into(),
+            address_size_bits: 64,
+            functions: vec![
+                function(
+                    "success",
+                    Some(Decompilation {
+                        status: DecompilationStatus::Succeeded,
+                        signature: "void success(void)".into(),
+                        c_code: "void success(void) {}".into(),
+                        error_message: None,
+                    }),
+                ),
+                function(
+                    "failed",
+                    Some(Decompilation {
+                        status: DecompilationStatus::Failed,
+                        signature: String::new(),
+                        c_code: String::new(),
+                        error_message: Some("failed".into()),
+                    }),
+                ),
+                function(
+                    "empty-success",
+                    Some(Decompilation {
+                        status: DecompilationStatus::Succeeded,
+                        signature: "void empty_success(void)".into(),
+                        c_code: "  \n".into(),
+                        error_message: None,
+                    }),
+                ),
+                function("absent", None),
+            ],
+        };
+        let mut summary = Vec::new();
+
+        write_summary(&program, &mut summary).unwrap();
+
+        let summary = String::from_utf8(summary).unwrap();
+        assert!(summary.contains("Functions with C pseudocode: 1/4"));
     }
 }
