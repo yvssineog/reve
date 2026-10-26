@@ -139,11 +139,21 @@ impl Listing {
     // Follows the call under the cursor to the function's entry.
     fn follow(&mut self, cx: &mut Context<Self>) {
         let (_, instruction) = self.under_cursor();
-        if let Some(function) = callee(&self.program, instruction)
-            && let Some(ix) = row_at(&self.instructions, function.entry)
-        {
+        if let Some(function) = callee(&self.program, instruction) {
+            self.go_to(function.entry, cx);
+        }
+    }
+
+    // Puts the cursor on the function entry at `entry`, centered. Every pane follows the
+    // cursor, so this is how any of them goes to a function.
+    pub fn go_to(&mut self, entry: Address, cx: &mut Context<Self>) {
+        if let Some(ix) = row_at(&self.instructions, entry) {
             self.jump(ix, ScrollStrategy::Center, cx);
         }
+    }
+
+    pub fn program(&self) -> &Program {
+        &self.program
     }
 
     // The function the cursor is in.

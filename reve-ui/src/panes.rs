@@ -1,4 +1,5 @@
 pub mod decompile;
+pub mod functions;
 pub mod listing;
 pub mod symbols;
 

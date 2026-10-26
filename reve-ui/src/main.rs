@@ -20,6 +20,7 @@ use reve_model::Program;
 
 use palette::Palette;
 use panes::decompile::Decompile;
+use panes::functions::Functions;
 use panes::listing::Listing;
 use panes::{note, pane, symbols};
 
@@ -106,6 +107,7 @@ enum Analysis {
         symbols: Entity<TreeState>,
         listing: Entity<Listing>,
         decompile: Entity<Decompile>,
+        functions: Entity<Functions>,
     },
     // Why, in one line.
     Failed(SharedString),
@@ -177,8 +179,8 @@ impl Reve {
         .detach();
     }
 
-    // Fills the Symbol Tree, Listing and Decompile, or says why not. The listing takes focus
-    // unless the user has already put it in a pane.
+    // Fills the Symbol Tree, Listing, Decompile and Functions, or says why not. The listing
+    // takes focus unless the user has already put it in a pane.
     fn analyzed(
         &mut self,
         name: SharedString,
@@ -209,9 +211,10 @@ impl Reve {
                     program.architecture,
                     program.functions.len()
                 );
-                let symbols = cx.new(|cx| symbols::state(&program, cx));
                 let listing = cx.new(|cx| Listing::new(program, cx));
+                let symbols = cx.new(|cx| symbols::state(&listing, cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
+                let functions = cx.new(|cx| Functions::new(listing.clone(), cx));
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
@@ -220,6 +223,7 @@ impl Reve {
                     symbols,
                     listing,
                     decompile,
+                    functions,
                 }
             }
         };
@@ -239,29 +243,27 @@ impl Render for Reve {
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
-        let (symbols, listing, decompile, decompiled) = match &workspace.analysis {
+        let not_ready = || note("Not ready.", cx).into_any_element();
+        let (symbols, listing, decompile, functions, decompiled) = match &workspace.analysis {
             Analysis::Done {
                 symbols,
                 listing,
                 decompile,
+                functions,
                 ..
             } => (
                 // Inset so the selected row's rounded fill clears the pane edges.
-                tree(symbols, symbols::row)
+                tree(symbols, symbols::row(listing.clone()))
                     .flex_1()
                     .min_h_0()
                     .px(px(6.))
                     .into_any_element(),
                 listing.clone().into_any_element(),
                 decompile.clone().into_any_element(),
+                functions.clone().into_any_element(),
                 Some(decompile.read(cx).name()),
             ),
-            _ => (
-                note("Not ready.", cx).into_any_element(),
-                note("Not ready.", cx).into_any_element(),
-                note("Not ready.", cx).into_any_element(),
-                None,
-            ),
+            _ => (not_ready(), not_ready(), not_ready(), not_ready(), None),
         };
         let (busy, status) = match &workspace.analysis {
             Analysis::Analyzing => (true, format!("Analyzing {}…", workspace.name).into()),
@@ -317,7 +319,7 @@ impl Render for Reve {
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
                         .fixed()
-                        .child(note("Not ready.", cx)),
+                        .child(functions),
                 ),
         );
 
