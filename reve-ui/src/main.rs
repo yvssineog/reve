@@ -1,9 +1,11 @@
 mod header;
+mod project;
 
 use std::borrow::Cow;
 
 use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{ResizablePanel, h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::tree::{TreeState, tree};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, TitleBar, h_flex, v_flex,
 };
@@ -22,8 +24,11 @@ macro_rules! icons {
 const ICONS: &[(&str, &[u8])] = icons![
     "caret-left",
     "caret-right",
+    "caret-down",
     "magnifying-glass-bold",
     "folder-simple-duotone",
+    "file-duotone",
+    "binary-duotone",
     "tree-structure-duotone",
     "cpu-duotone",
     "brackets-curly-duotone",
@@ -61,6 +66,7 @@ struct Reve {
     focus: FocusHandle,
     sidebar_open: bool,
     bottom_open: bool,
+    project: Entity<TreeState>,
 }
 
 impl Reve {
@@ -71,6 +77,7 @@ impl Reve {
             focus,
             sidebar_open: true,
             bottom_open: true,
+            project: cx.new(project::state),
         }
     }
 }
@@ -88,8 +95,29 @@ impl Render for Reve {
             .fixed()
             .child(
                 v_resizable("sidebar")
-                    .child(pane(theme, "folder-simple", theme.cyan, "Project"))
-                    .child(pane(theme, "tree-structure", theme.magenta, "Symbol Tree")),
+                    .child(
+                        pane(
+                            theme,
+                            "folder-simple",
+                            theme.cyan,
+                            "Project",
+                            Some(project::NAME),
+                        )
+                        .child(
+                            // Inset so the selected row's rounded fill clears the pane edges.
+                            tree(&self.project, project::row)
+                                .flex_1()
+                                .min_h_0()
+                                .px(px(6.)),
+                        ),
+                    )
+                    .child(pane(
+                        theme,
+                        "tree-structure",
+                        theme.magenta,
+                        "Symbol Tree",
+                        None,
+                    )),
             );
 
         // Listing beside Decompile over the Functions window, on the darker content tint.
@@ -99,12 +127,18 @@ impl Render for Reve {
                 .child(
                     resizable_panel().child(
                         h_resizable("code")
-                            .child(pane(theme, "cpu", theme.blue, "Listing"))
-                            .child(pane(theme, "brackets-curly", theme.green, "Decompile")),
+                            .child(pane(theme, "cpu", theme.blue, "Listing", None))
+                            .child(pane(
+                                theme,
+                                "brackets-curly",
+                                theme.green,
+                                "Decompile",
+                                None,
+                            )),
                     ),
                 )
                 .child(
-                    pane(theme, "function", theme.magenta, "Functions")
+                    pane(theme, "function", theme.magenta, "Functions", None)
                         .visible(self.bottom_open)
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
@@ -137,9 +171,16 @@ impl Render for Reve {
     }
 }
 
-// A pane: a header row (Phosphor duotone icon in the pane's hue + title) over an empty body.
-fn pane(theme: &Theme, icon: &str, hue: Hsla, title: &'static str) -> ResizablePanel {
-    resizable_panel().child(
+// A pane: a header row (Phosphor duotone icon in the pane's hue + title + optional detail)
+// over the caller's body.
+fn pane(
+    theme: &Theme,
+    icon: &str,
+    hue: Hsla,
+    title: &'static str,
+    detail: Option<&'static str>,
+) -> ResizablePanel {
+    resizable_panel().flex_col().child(
         h_flex()
             .h(px(32.))
             .flex_none()
@@ -154,7 +195,16 @@ fn pane(theme: &Theme, icon: &str, hue: Hsla, title: &'static str) -> ResizableP
                     .with_size(px(14.))
                     .text_color(hue),
             )
-            .child(title),
+            .child(title)
+            // Detail reads quieter than the title, in the same font and size so baselines line up.
+            .children(detail.map(|detail| {
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_normal()
+                    .text_color(theme.muted_foreground.opacity(0.7))
+                    .child(detail)
+            })),
     )
 }
 
