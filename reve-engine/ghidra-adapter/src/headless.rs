@@ -1,6 +1,7 @@
 //! Process launching and timeout handling for Ghidra Headless.
 
 use std::{
+    env,
     ffi::OsStr,
     fs,
     io::{self, Read},
@@ -42,6 +43,7 @@ pub(crate) fn run_headless(
     ];
 
     let mut command = make_command(&config.analyze_headless, &args);
+    configure_java_environment(&mut command, &config.java_home)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(ParserError::ProcessStart)?;
@@ -98,6 +100,21 @@ pub(crate) fn run_headless(
     }
 
     Ok(output)
+}
+
+fn configure_java_environment(command: &mut Command, java_home: &Path) -> Result<(), ParserError> {
+    let java_bin = java_home.join("bin");
+    let existing_path = env::var_os("PATH").unwrap_or_default();
+    let path = env::join_paths(std::iter::once(java_bin).chain(env::split_paths(&existing_path)))
+        .map_err(|error| {
+        ParserError::ProcessStart(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("could not prepare the project JDK PATH: {error}"),
+        ))
+    })?;
+
+    command.env("JAVA_HOME", java_home).env("PATH", path);
+    Ok(())
 }
 
 fn read_all(mut reader: impl Read) -> io::Result<Vec<u8>> {
@@ -167,6 +184,33 @@ fn terminate_process_tree(child: &mut std::process::Child) {
         .stderr(Stdio::null())
         .status();
     let _ = child.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_uses_the_configured_jdk_and_puts_it_first_on_path() {
+        let java_home = Path::new("C:/reve/.tools/java/temurin-25");
+        let mut command = Command::new("placeholder");
+
+        configure_java_environment(&mut command, java_home).unwrap();
+
+        let environment = command
+            .get_envs()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect::<Vec<_>>();
+        assert!(environment.iter().any(|(key, value)| {
+            *key == OsStr::new("JAVA_HOME") && *value == java_home.as_os_str()
+        }));
+        let path = environment
+            .iter()
+            .find(|(key, _)| *key == OsStr::new("PATH"))
+            .map(|(_, value)| env::split_paths(value).collect::<Vec<_>>())
+            .unwrap();
+        assert_eq!(path.first(), Some(&java_home.join("bin")));
+    }
 }
 
 #[cfg(not(windows))]

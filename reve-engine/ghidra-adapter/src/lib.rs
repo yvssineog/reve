@@ -35,3 +35,6 @@ pub(crate) mod headless;
 pub use config::GhidraConfig;
 pub use error::ParserError;
 pub use orchestrator::GhidraAdapter;
+
+#[cfg(test)]
+mod test_support;

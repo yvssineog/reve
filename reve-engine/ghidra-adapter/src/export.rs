@@ -90,3 +90,94 @@ fn instruction_into_model(message: wire::Instruction) -> Instruction {
         bytes: message.bytes,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{proto::reve::engine::v1 as wire, test_support::TempDirectory};
+    use prost::Message;
+
+    fn sample_message() -> wire::Program {
+        wire::Program {
+            name: "firmware.elf".into(),
+            format: "ELF".into(),
+            architecture: "x86:LE:64:default".into(),
+            address_size_bits: 64,
+            functions: vec![wire::Function {
+                name: "entry".into(),
+                entry: u64::MAX,
+                size: 5,
+                instructions: vec![wire::Instruction {
+                    address: u64::MAX - 1,
+                    size: 2,
+                    mnemonic: "mov".into(),
+                    operands: "rax, rbx".into(),
+                    bytes: vec![0x48, 0x89],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn into_model_preserves_unsigned_addresses_and_instruction_data() {
+        let model = into_model(sample_message());
+
+        assert_eq!(model.name, "firmware.elf");
+        assert_eq!(model.format, "ELF");
+        assert_eq!(model.architecture, "x86:LE:64:default");
+        assert_eq!(model.address_size_bits, 64);
+        assert_eq!(model.functions.len(), 1);
+        assert_eq!(model.functions[0].entry, Address(u64::MAX));
+        assert_eq!(model.functions[0].size, 5);
+        assert_eq!(model.functions[0].instructions.len(), 1);
+        assert_eq!(
+            model.functions[0].instructions[0].address,
+            Address(u64::MAX - 1)
+        );
+        assert_eq!(model.functions[0].instructions[0].bytes, [0x48, 0x89]);
+    }
+
+    #[test]
+    fn read_export_decodes_a_valid_message_and_ignores_unknown_fields() {
+        let temp = TempDirectory::new("export-valid").unwrap();
+        let path = temp.path().join("result.pb");
+        let mut bytes = sample_message().encode_to_vec();
+        // Protobuf field 100, varint value 1. Older readers must skip it.
+        bytes.extend_from_slice(&[0xA0, 0x06, 0x01]);
+        fs::write(&path, bytes).unwrap();
+
+        let model = read_export(&path).unwrap();
+        assert_eq!(model.name, "firmware.elf");
+        assert_eq!(model.functions[0].instructions[0].mnemonic, "mov");
+    }
+
+    #[test]
+    fn read_export_reports_a_missing_file() {
+        let temp = TempDirectory::new("export-missing").unwrap();
+
+        assert!(matches!(
+            read_export(temp.path().join("missing.pb")),
+            Err(ExportError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn read_export_reports_truncated_protobuf() {
+        let temp = TempDirectory::new("export-malformed").unwrap();
+        let path = temp.path().join("malformed.pb");
+        fs::write(&path, [0x0A, 0x04, b'x']).unwrap();
+
+        assert!(matches!(read_export(&path), Err(ExportError::Protobuf(_))));
+    }
+
+    #[test]
+    fn empty_proto3_message_decodes_to_default_model() {
+        let temp = TempDirectory::new("export-empty-message").unwrap();
+        let path = temp.path().join("empty.pb");
+        fs::write(&path, b"").unwrap();
+
+        let model = read_export(&path).unwrap();
+        assert!(model.name.is_empty());
+        assert!(model.functions.is_empty());
+    }
+}

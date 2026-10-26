@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tarfile
@@ -119,6 +120,28 @@ def safe_extract_tar(archive: Path, destination: Path) -> None:
         tar.extractall(destination, filter="data")
 
 
+def configure_ghidra_jdk() -> None:
+    """Pin Ghidra's Java launcher to the project-local Temurin JDK."""
+    properties = GHIDRA_DIR / "support" / "launch.properties"
+    if not properties.is_file():
+        raise RuntimeError(f"Ghidra launch properties are missing: {properties}")
+
+    content = properties.read_text(encoding="utf-8")
+    jdk_home = JDK_DIR.resolve().as_posix()
+    replacement = f"JAVA_HOME_OVERRIDE={jdk_home}"
+    updated, count = re.subn(
+        r"(?m)^JAVA_HOME_OVERRIDE=.*$",
+        lambda _match: replacement,
+        content,
+        count=1,
+    )
+    if count == 0:
+        updated = content.rstrip("\r\n") + "\n\n" + replacement + "\n"
+
+    if updated != content:
+        properties.write_text(updated, encoding="utf-8", newline="\n")
+
+
 def install_archive(
     archive: Path,
     staging: Path,
@@ -199,10 +222,13 @@ def main() -> int:
             shutil.rmtree(staging, ignore_errors=True)
             print(f"Installed Temurin JDK 25: {JDK_DIR}")
 
+        configure_ghidra_jdk()
+        print(f"Configured Ghidra to use the project JDK: {JDK_DIR}")
+
         print("\nTools are ready. Ghidra's headless launcher:")
         launcher = "analyzeHeadless.bat" if os.name == "nt" else "analyzeHeadless"
         print(f"  {GHIDRA_DIR / 'support' / launcher}")
-        print("The script does not modify JAVA_HOME or the system PATH.")
+        print("The script does not modify JAVA_HOME or PATH in your system settings.")
         return 0
     except (OSError, urllib.error.URLError, zipfile.BadZipFile, tarfile.TarError, RuntimeError) as error:
         print(f"setup_tools: {error}", file=sys.stderr)

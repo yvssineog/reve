@@ -79,3 +79,39 @@ impl Drop for JobDirectory {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TempDirectory;
+
+    #[test]
+    fn jobs_are_unique_absolute_and_removed_on_drop() {
+        let temp = TempDirectory::new("job-unique").unwrap();
+        let first = JobDirectory::create(temp.path()).unwrap();
+        let second = JobDirectory::create(temp.path()).unwrap();
+        let first_path = first.path().to_path_buf();
+
+        assert!(first.path().is_absolute());
+        assert_ne!(first.path(), second.path());
+        assert_eq!(first.export_path(), first.path().join("result.pb"));
+
+        fs::write(first.export_path(), b"temporary export").unwrap();
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second.path().exists());
+    }
+
+    #[test]
+    fn projects_root_is_created_when_missing() {
+        let temp = TempDirectory::new("job-root").unwrap();
+        let projects_root = temp.path().join("new projects root");
+        let job = JobDirectory::create(&projects_root).unwrap();
+
+        assert!(projects_root.is_dir());
+        assert!(
+            job.path()
+                .starts_with(projects_root.canonicalize().unwrap())
+        );
+    }
+}
