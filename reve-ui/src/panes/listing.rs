@@ -1,5 +1,4 @@
-pub(super) mod mock;
-
+use std::collections::HashMap;
 use std::ops::Range;
 
 use gpui_kit::base::actions::{Confirm, SelectDown, SelectPageDown, SelectPageUp, SelectUp};
@@ -7,9 +6,10 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use reve_model::{Address, Function, Instruction, Program};
 
+use crate::mock;
 use crate::palette::Palette;
-use mock::START;
 
 // The key context both code panes, listing and decompiler, bind their shortcuts under.
 pub const CONTEXT: &str = "Code";
@@ -43,45 +43,57 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-// One 18px row, as the listing shows it.
-#[derive(Clone, Copy)]
-pub enum Row {
+// One 18px row, as the listing shows it. Functions and instructions are indices into the
+// program.
+enum Row {
     // The hairline between two functions.
     Gap,
     Plate(&'static str),
     Signature(&'static str),
     // A function's name and its XREF summary.
-    Label(&'static str, Option<&'static str>),
-    Code(Code),
+    Label(usize, Option<SharedString>),
+    // A function's instruction.
+    Code(usize, usize),
 }
 
-// An instruction, then what it loads or its comment.
-#[derive(Clone, Copy)]
-pub struct Code {
-    address: u32,
-    bytes: &'static str,
-    mnemonic: &'static str,
-    operands: Operands,
-    eol: Option<Eol>,
+// What an instruction's operands refer to, which picks their color.
+enum Operands<'a> {
+    Plain,
+    // One of the program's functions, named by its entry address.
+    Call(&'a Function),
+    // A library's function, which Ghidra writes `<EXTERNAL>::name`.
+    External(&'a str),
 }
 
-// Operands by what they refer to, which picks their color.
-#[derive(Clone, Copy)]
-pub enum Operands {
-    Plain(&'static str),
-    // A function here, by name and entry address.
-    Call(&'static str, u32),
-    External(&'static str),
-}
+impl<'a> Operands<'a> {
+    fn of(program: &'a Program, instruction: &'a Instruction) -> Self {
+        if let Some(name) = instruction.operands.strip_prefix("<EXTERNAL>::") {
+            return Operands::External(name);
+        }
+        let function = target(&instruction.operands).and_then(|address| {
+            let ix = program
+                .functions
+                .binary_search_by_key(&address, |function| function.entry)
+                .ok()?;
+            Some(&program.functions[ix])
+        });
+        function.map_or(Operands::Plain, Operands::Call)
+    }
 
-impl Operands {
     // The function called, here or in a library.
-    fn call(&self) -> Option<&'static str> {
+    fn call(&self) -> Option<&'a str> {
         match *self {
-            Operands::Plain(_) => None,
-            Operands::Call(name, _) | Operands::External(name) => Some(name),
+            Operands::Plain => None,
+            Operands::Call(function) => Some(&function.name),
+            Operands::External(name) => Some(name),
         }
     }
+}
+
+// The address an operand names, in Ghidra's `0x` form.
+pub fn target(operands: &str) -> Option<Address> {
+    let hex = operands.strip_prefix("0x")?;
+    u64::from_str_radix(hex, 16).ok().map(Address)
 }
 
 // The end of an instruction's line.
@@ -92,20 +104,21 @@ pub enum Eol {
 }
 
 // Where the cursor is, as the decompiler reads it.
-pub struct Spot {
-    pub address: u32,
-    pub function: &'static str,
-    // The cursor is on the function's first instruction.
+pub struct Spot<'a> {
+    pub address: Address,
+    pub function: &'a str,
+    // The cursor is on the function's entry.
     pub entry: bool,
-    pub call: Option<&'static str>,
+    pub call: Option<&'a str>,
 }
 
 // The program's disassembly, with a cursor on one instruction.
 pub struct Listing {
+    program: Program,
     rows: Vec<Row>,
     // Each instruction's address and row, in order. Both rise together, so either one
     // finds an instruction by binary search.
-    instructions: Vec<(u32, usize)>,
+    instructions: Vec<(Address, usize)>,
     // A row index, always one of `instructions`.
     cursor: usize,
     scroll: UniformListScrollHandle,
@@ -114,13 +127,14 @@ pub struct Listing {
 
 impl Listing {
     // Opens with the cursor on the start function's entry, mid-pane.
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let rows = mock::rows();
-        let instructions = index(&rows);
-        let cursor = entry(&instructions, START).unwrap_or_default();
+    pub fn new(program: Program, cx: &mut Context<Self>) -> Self {
+        let rows = layout(&program);
+        let instructions = index(&program, &rows);
+        let cursor = row_at(&instructions, mock::START).unwrap_or_default();
         let scroll = UniformListScrollHandle::new();
         scroll.scroll_to_item(cursor, ScrollStrategy::Center);
         Self {
+            program,
             rows,
             instructions,
             cursor,
@@ -167,30 +181,41 @@ impl Listing {
 
     // Follows the call under the cursor to the function's entry.
     pub fn follow(&mut self, cx: &mut Context<Self>) {
-        if let Row::Code(Code {
-            operands: Operands::Call(_, address),
-            ..
-        }) = self.rows[self.cursor]
-            && let Some(ix) = entry(&self.instructions, address)
+        let (_, instruction) = self.under_cursor();
+        if let Operands::Call(function) = Operands::of(&self.program, instruction)
+            && let Some(ix) = row_at(&self.instructions, function.entry)
         {
             self.jump(ix, ScrollStrategy::Center, cx);
         }
     }
 
-    pub fn spot(&self) -> Spot {
-        spot(&self.rows, self.cursor)
+    pub fn spot(&self) -> Spot<'_> {
+        let (function, instruction) = self.under_cursor();
+        spot(&self.program, function, instruction)
     }
 
     // Puts the cursor on the first instruction in its function that calls `name`.
     pub fn pick_call(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
-        let (_, mut rows) = function(&self.rows, self.cursor);
-        let Some(ix) = rows.find(
-            |&ix| matches!(self.rows[ix], Row::Code(code) if code.operands.call() == Some(name)),
-        ) else {
+        let (function, _) = self.under_cursor();
+        let Some(ix) = function
+            .instructions
+            .iter()
+            .find(|instruction| Operands::of(&self.program, instruction).call() == Some(name))
+            .and_then(|instruction| row_at(&self.instructions, instruction.address))
+        else {
             return false;
         };
         self.jump(ix, ScrollStrategy::Nearest, cx);
         true
+    }
+
+    // The instruction under the cursor, and its function.
+    fn under_cursor(&self) -> (&Function, &Instruction) {
+        let Row::Code(function, instruction) = self.rows[self.cursor] else {
+            unreachable!("the cursor is always on an instruction");
+        };
+        let function = &self.program.functions[function];
+        (function, &function.instructions[instruction])
     }
 
     // Row `ix`, inset by the gutter, which will hold bookmarks.
@@ -210,16 +235,16 @@ impl Listing {
                 .text_color(palette.fg_3)
                 .child(*signature)
                 .into_any_element(),
-            Row::Label(name, xrefs) => header(h_flex().w_full().h(ROW).px(GUTTER))
+            Row::Label(function, xrefs) => header(h_flex().w_full().h(ROW).px(GUTTER))
                 .gap_4()
                 .child(
                     div()
                         .flex_none()
                         .font_semibold()
                         .text_color(palette.symbol)
-                        .child(*name),
+                        .child(self.program.functions[*function].name.clone()),
                 )
-                .children(xrefs.map(|xrefs| {
+                .children(xrefs.clone().map(|xrefs| {
                     div()
                         .ml_auto()
                         .min_w_0()
@@ -228,27 +253,35 @@ impl Listing {
                         .child(xrefs)
                 }))
                 .into_any_element(),
-            Row::Code(code) => self.code(ix, code, palette, cx),
+            Row::Code(function, instruction) => {
+                let instruction = &self.program.functions[*function].instructions[*instruction];
+                self.instruction(ix, instruction, palette, cx)
+            }
         }
     }
 
     // Pressing puts the cursor on the row; a double click follows a call.
-    fn code(
+    fn instruction(
         &self,
         ix: usize,
-        code: &Code,
+        instruction: &Instruction,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (operands, hue): (SharedString, _) = match code.operands {
-            Operands::Plain(text) => (text.into(), palette.fg),
-            Operands::Call(name, _) => (name.into(), palette.symbol),
-            Operands::External(name) => (format!("<EXTERNAL>::{name}").into(), palette.external),
+        let (operands, hue) = match Operands::of(&self.program, instruction) {
+            Operands::Plain => (&instruction.operands, palette.fg),
+            Operands::Call(function) => (&function.name, palette.symbol),
+            Operands::External(_) => (&instruction.operands, palette.external),
         };
-        let eol = code.eol.as_ref().map(|eol| match eol {
+        let eol = mock::eol(instruction.address).map(|eol| match eol {
             Eol::String(text) => (format!("= \"{text}\""), palette.string),
             Eol::Comment(text) => (format!("; {text}"), palette.comment),
         });
+        let bytes: Vec<String> = instruction
+            .bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
 
         h_flex()
             .id(ix)
@@ -262,10 +295,18 @@ impl Listing {
                     row.hover(|row| row.bg(palette.fg.opacity(0.04)))
                 }
             })
-            .child(cell(ADDRESS, format!("{:08x}", code.address), palette.fg_3))
-            .child(cell(BYTES, code.bytes, palette.fg_4))
-            .child(cell(MNEMONIC, code.mnemonic, palette.mnemonic))
-            .child(cell(OPERANDS, operands, hue))
+            .child(cell(
+                ADDRESS,
+                format!("{:08x}", instruction.address.0),
+                palette.fg_3,
+            ))
+            .child(cell(BYTES, bytes.join(" "), palette.fg_4))
+            .child(cell(
+                MNEMONIC,
+                instruction.mnemonic.clone(),
+                palette.mnemonic,
+            ))
+            .child(cell(OPERANDS, operands.clone(), hue))
             .children(eol.map(|(text, hue)| div().min_w_0().truncate().text_color(hue).child(text)))
             .on_mouse_down(
                 MouseButton::Left,
@@ -322,56 +363,80 @@ impl Render for Listing {
     }
 }
 
+// Each function's plate, signature and label over its instructions, a gap between functions.
+fn layout(program: &Program) -> Vec<Row> {
+    let mut xrefs = xrefs(program);
+    let mut rows = Vec::new();
+    for (ix, function) in program.functions.iter().enumerate() {
+        if ix > 0 {
+            rows.push(Row::Gap);
+        }
+        if let Some(&(_, plate, code)) = mock::DECOMPILED
+            .iter()
+            .find(|&&(name, ..)| name == function.name)
+        {
+            rows.extend(plate.map(Row::Plate));
+            rows.extend(code.lines().next().map(Row::Signature));
+        }
+        rows.push(Row::Label(ix, xrefs.remove(&function.entry)));
+        rows.extend((0..function.instructions.len()).map(|instruction| Row::Code(ix, instruction)));
+    }
+    rows
+}
+
+// Who calls each function, by its entry: `XREF[n]: caller:address(c), ...`, in address order.
+fn xrefs(program: &Program) -> HashMap<Address, SharedString> {
+    let mut callers: HashMap<Address, Vec<String>> = HashMap::new();
+    for function in &program.functions {
+        for instruction in &function.instructions {
+            if let Operands::Call(callee) = Operands::of(program, instruction) {
+                let caller = format!("{}:{:08x}(c)", function.name, instruction.address.0);
+                callers.entry(callee.entry).or_default().push(caller);
+            }
+        }
+    }
+    callers
+        .into_iter()
+        .map(|(entry, callers)| {
+            let xrefs = format!("XREF[{}]: {}", callers.len(), callers.join(", "));
+            (entry, xrefs.into())
+        })
+        .collect()
+}
+
 // Each instruction's address and row, in row order.
-fn index(rows: &[Row]) -> Vec<(u32, usize)> {
+fn index(program: &Program, rows: &[Row]) -> Vec<(Address, usize)> {
     rows.iter()
         .enumerate()
-        .filter_map(|(ix, row)| match row {
-            Row::Code(code) => Some((code.address, ix)),
+        .filter_map(|(ix, row)| match *row {
+            Row::Code(function, instruction) => Some((
+                program.functions[function].instructions[instruction].address,
+                ix,
+            )),
             _ => None,
         })
         .collect()
 }
 
 // The row of the instruction at `address`.
-fn entry(instructions: &[(u32, usize)], address: u32) -> Option<usize> {
+fn row_at(instructions: &[(Address, usize)], address: Address) -> Option<usize> {
     let at = instructions
         .binary_search_by_key(&address, |&(address, _)| address)
         .ok()?;
     Some(instructions[at].1)
 }
 
-// The function holding row `ix`: its name, and its rows from its label to the next gap.
-fn function(rows: &[Row], ix: usize) -> (&'static str, Range<usize>) {
-    let (start, name) = rows[..=ix]
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(ix, row)| match row {
-            Row::Label(name, _) => Some((ix, *name)),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let end = rows[ix..]
-        .iter()
-        .position(|row| matches!(row, Row::Gap))
-        .map_or(rows.len(), |len| ix + len);
-    (name, start..end)
-}
-
-// Where the instruction at row `cursor` sits in its function.
-pub(super) fn spot(rows: &[Row], cursor: usize) -> Spot {
-    let Row::Code(code) = rows[cursor] else {
-        unreachable!("the cursor is always on an instruction");
-    };
-    let (function, range) = function(rows, cursor);
+// Where `instruction` sits in `function`.
+pub(super) fn spot<'a>(
+    program: &'a Program,
+    function: &'a Function,
+    instruction: &'a Instruction,
+) -> Spot<'a> {
     Spot {
-        address: code.address,
-        function,
-        entry: !rows[range.start..cursor]
-            .iter()
-            .any(|row| matches!(row, Row::Code(_))),
-        call: code.operands.call(),
+        address: instruction.address,
+        function: &function.name,
+        entry: instruction.address == function.entry,
+        call: Operands::of(program, instruction).call(),
     }
 }
 
@@ -392,27 +457,46 @@ fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{Operands, Row, entry, index, mock};
+    use reve_model::Address;
+
+    use super::{Operands, index, layout, row_at, xrefs};
+    use crate::mock;
 
     #[test]
     fn calls_land_on_instructions() {
-        let rows = mock::rows();
-        let instructions = index(&rows);
+        let program = mock::stress(mock::program());
+        let rows = layout(&program);
+        let instructions = index(&program, &rows);
         assert!(rows.len() > 1_000_000);
         assert!(
             instructions.windows(2).all(|pair| pair[0].0 < pair[1].0),
             "addresses rise row by row"
         );
-        assert!(entry(&instructions, mock::START).is_some());
-        for row in &rows {
-            if let Row::Code(code) = row
-                && let Operands::Call(name, address) = code.operands
-            {
-                assert!(
-                    entry(&instructions, address).is_some(),
-                    "{name} at {address:08x}"
-                );
+        assert!(row_at(&instructions, mock::START).is_some());
+        for function in &program.functions {
+            for instruction in &function.instructions {
+                if instruction.mnemonic == "bl" {
+                    assert!(
+                        Operands::of(&program, instruction).call().is_some(),
+                        "{} at {:08x}",
+                        instruction.operands,
+                        instruction.address.0
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    fn xrefs_name_callers() {
+        let xrefs = xrefs(&mock::program());
+        assert_eq!(
+            &*xrefs[&Address(0x00413480)],
+            "XREF[3]: handle_client:00411f50(c), parse_request:00412a68(c), serve_file:00414444(c)"
+        );
+        assert!(
+            !xrefs.contains_key(&Address(0x00410c40)),
+            "nothing calls main"
+        );
     }
 }

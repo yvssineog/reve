@@ -7,6 +7,7 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use reve_model::Address;
 
 use super::listing::{CONTEXT, GUTTER, HalfPageDown, HalfPageUp, Listing, PAGE, ROW, Spot};
 use crate::palette::Palette;
@@ -70,7 +71,7 @@ pub struct Decompile {
     // The highlighted line.
     cursor: Option<usize>,
     // A line picked here, held while the listing cursor stays on that address.
-    picked: Option<(u32, usize)>,
+    picked: Option<(Address, usize)>,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     _sync: Subscription,
@@ -282,28 +283,26 @@ fn line_of(function: &Function, spot: &Spot) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{line_of, mock};
-    use crate::panes::listing::{Row, mock::TEMPLATE, spot};
+    use crate::panes::listing::spot;
 
     #[test]
     fn listing_lands_on_lines() {
+        let program = crate::mock::program();
         let functions = mock::functions();
-        for (ix, row) in TEMPLATE.iter().enumerate() {
-            if let Row::Label(name, _) = row {
-                assert!(functions.iter().any(|f| f.name == *name), "{name}");
-            }
-            if !matches!(row, Row::Code(_)) {
-                continue;
-            }
-            let spot = spot(TEMPLATE, ix);
-            let function = functions.iter().find(|f| f.name == spot.function).unwrap();
-            let line = line_of(function, &spot);
-            if spot.entry {
-                assert_eq!(line, Some(function.signature), "{} entry", spot.function);
-                let signature = &function.lines[function.signature];
-                assert_eq!(signature.names().next(), Some(function.name));
-            }
-            if let Some(call) = spot.call {
-                assert!(line.is_some(), "{call} in {}", spot.function);
+        for function in &program.functions {
+            let decompiled = functions.iter().find(|f| f.name == function.name);
+            let decompiled = decompiled.unwrap_or_else(|| panic!("{}", function.name));
+            for instruction in &function.instructions {
+                let spot = spot(&program, function, instruction);
+                let line = line_of(decompiled, &spot);
+                if spot.entry {
+                    assert_eq!(line, Some(decompiled.signature), "{} entry", spot.function);
+                    let signature = &decompiled.lines[decompiled.signature];
+                    assert_eq!(signature.names().next(), Some(decompiled.name));
+                }
+                if let Some(call) = spot.call {
+                    assert!(line.is_some(), "{call} in {}", spot.function);
+                }
             }
         }
     }

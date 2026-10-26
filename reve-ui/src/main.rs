@@ -1,4 +1,5 @@
 mod header;
+mod mock;
 mod palette;
 mod panes;
 
@@ -80,7 +81,9 @@ struct Reve {
 impl Reve {
     // Opens with the listing focused, so its keys work without a click first.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let listing = cx.new(Listing::new);
+        let program = mock::program();
+        let symbols = cx.new(|cx| symbols::state(&program, cx));
+        let listing = cx.new(|cx| Listing::new(mock::stress(program), cx));
         let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
         window.focus(&listing.focus_handle(cx), cx);
         Self {
@@ -88,7 +91,7 @@ impl Reve {
             sidebar_open: true,
             bottom_open: true,
             project: cx.new(project::state),
-            symbols: cx.new(symbols::state),
+            symbols,
             listing,
             decompile,
         }

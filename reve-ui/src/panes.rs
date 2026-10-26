@@ -53,7 +53,7 @@ fn tree_row(
     entry: &TreeEntry,
     icon: &str,
     hue: Hsla,
-    detail: Option<&'static str>,
+    detail: Option<SharedString>,
     cx: &App,
 ) -> ListItem {
     let theme = cx.theme();
