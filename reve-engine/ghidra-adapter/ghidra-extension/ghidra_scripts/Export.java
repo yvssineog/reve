@@ -1,5 +1,8 @@
 // Export the analyzed program currently open in Ghidra as a reve.engine.v1.Program.
 import ghidra.app.script.GhidraScript;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
@@ -9,6 +12,7 @@ import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.util.exception.CancelledException;
 import com.google.protobuf.ByteString;
 import reve.engine.v1.Engine;
 
@@ -18,6 +22,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class Export extends GhidraScript {
+	private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
+
 	@Override
 	public void run() throws Exception {
 		if (currentProgram == null) {
@@ -54,17 +60,41 @@ public class Export extends GhidraScript {
 			.setArchitecture(program.getLanguageID().toString())
 			.setAddressSizeBits(program.getDefaultPointerSize() * Byte.SIZE);
 
+		DecompInterface decompiler = new DecompInterface();
+		decompiler.toggleCCode(true);
+		String decompilerOpenError = openDecompiler(decompiler, program);
+		if (decompilerOpenError != null) {
+			println("WARNING: " + decompilerOpenError + "; function instructions will still be exported.");
+		}
+
 		Listing listing = program.getListing();
-		FunctionIterator functions = program.getFunctionManager().getFunctions(true);
-		while (functions.hasNext()) {
-			monitor.checkCancelled();
-			result.addFunctions(collectFunction(functions.next(), listing, defaultSpace));
+		try {
+			FunctionIterator functions = program.getFunctionManager().getFunctions(true);
+			while (functions.hasNext()) {
+				monitor.checkCancelled();
+				result.addFunctions(collectFunction(
+					functions.next(), listing, defaultSpace, decompiler, decompilerOpenError));
+			}
+		} finally {
+			decompiler.dispose();
 		}
 		return result.build();
 	}
 
+	private String openDecompiler(DecompInterface decompiler, Program program) {
+		try {
+			if (decompiler.openProgram(program)) {
+				return null;
+			}
+			return diagnostic(decompiler.getLastMessage(), "Ghidra could not start the decompiler.");
+		} catch (RuntimeException error) {
+			return exceptionMessage(error);
+		}
+	}
+
 	private Engine.Function collectFunction(
-			Function function, Listing listing, AddressSpace defaultSpace) throws Exception {
+			Function function, Listing listing, AddressSpace defaultSpace,
+			DecompInterface decompiler, String decompilerOpenError) throws Exception {
 		AddressSetView body = function.getBody();
 		long sizeInAddressUnits = body.getNumAddresses();
 		long sizeInBytes = Math.multiplyExact(sizeInAddressUnits, defaultSpace.getAddressableUnitSize());
@@ -79,7 +109,81 @@ public class Export extends GhidraScript {
 			monitor.checkCancelled();
 			result.addInstructions(collectInstruction(instructions.next()));
 		}
+		result.setDecompilation(collectDecompilation(function, decompiler, decompilerOpenError));
 		return result.build();
+	}
+
+	private Engine.Decompilation collectDecompilation(
+			Function function, DecompInterface decompiler, String decompilerOpenError) throws Exception {
+		if (decompilerOpenError != null) {
+			return failedDecompilation(decompilerOpenError);
+		}
+
+		monitor.checkCancelled();
+		try {
+			DecompileResults results = decompiler.decompileFunction(
+				function, DECOMPILATION_TIMEOUT_SECONDS, monitor);
+			if (results == null) {
+				return failedDecompilation("Ghidra returned no decompilation result.");
+			}
+			if (results.isCancelled()) {
+				if (monitor.isCancelled()) {
+					monitor.checkCancelled();
+				}
+				return failedDecompilation("Ghidra cancelled this function's decompilation.");
+			}
+			if (results.isTimedOut()) {
+				return timedOutDecompilation(diagnostic(
+					results.getErrorMessage(), "Decompilation exceeded the "
+						+ DECOMPILATION_TIMEOUT_SECONDS + " second time limit."));
+			}
+			if (!results.decompileCompleted()) {
+				return failedDecompilation(diagnostic(
+					results.getErrorMessage(), "Ghidra could not decompile this function."));
+			}
+
+			DecompiledFunction decompiled = results.getDecompiledFunction();
+			if (decompiled == null) {
+				return failedDecompilation("Ghidra completed decompilation without returning C code.");
+			}
+
+			return Engine.Decompilation.newBuilder()
+				.setStatus(Engine.Decompilation.Status.SUCCEEDED)
+				.setSignature(nullToEmpty(decompiled.getSignature()))
+				.setCCode(nullToEmpty(decompiled.getC()))
+				.build();
+		} catch (Exception error) {
+			if (error instanceof CancelledException || monitor.isCancelled()) {
+				throw error;
+			}
+			return failedDecompilation(exceptionMessage(error));
+		}
+	}
+
+	private Engine.Decompilation failedDecompilation(String message) {
+		return Engine.Decompilation.newBuilder()
+			.setStatus(Engine.Decompilation.Status.FAILED)
+			.setErrorMessage(message)
+			.build();
+	}
+
+	private Engine.Decompilation timedOutDecompilation(String message) {
+		return Engine.Decompilation.newBuilder()
+			.setStatus(Engine.Decompilation.Status.TIMED_OUT)
+			.setErrorMessage(message)
+			.build();
+	}
+
+	private String diagnostic(String message, String fallback) {
+		return message == null || message.isBlank() ? fallback : message;
+	}
+
+	private String exceptionMessage(Exception error) {
+		return diagnostic(error.getMessage(), error.getClass().getSimpleName());
+	}
+
+	private String nullToEmpty(String value) {
+		return value == null ? "" : value;
 	}
 
 	private Engine.Instruction collectInstruction(Instruction instruction) throws Exception {
