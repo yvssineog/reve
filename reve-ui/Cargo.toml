@@ -6,3 +6,7 @@ publish = false
 
 [dependencies]
 gpui-kit = "0.8.1"
+
+[[bin]]
+name = "Rêve"
+path = "src/main.rs"
