@@ -4,14 +4,14 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
-use crate::OpenFolder;
+use crate::OpenBinary;
 use crate::header::key_badge;
 use crate::palette::Palette;
 
-// Where `OpenFolder`'s I key works: only here, so it never shadows a pane's keys.
+// Where `OpenBinary`'s I key works: only here, so it never shadows a pane's keys.
 pub const CONTEXT: &str = "Empty";
 
-// The window before a folder is open: one action on the content tint, nothing else.
+// The window before a binary is open: one action on the content tint, nothing else.
 // The bare title bar keeps the window draggable; its hairline is hidden so the
 // surface reads as one piece.
 pub fn screen(cx: &App) -> Div {
@@ -35,7 +35,7 @@ pub fn screen(cx: &App) -> Div {
                 .pb(px(42.))
                 .child(
                     Icon::empty()
-                        .path("icons/folder-simple-duotone.svg")
+                        .path("icons/binary-duotone.svg")
                         .with_size(px(28.))
                         .text_color(palette.number),
                 )
@@ -45,16 +45,16 @@ pub fn screen(cx: &App) -> Div {
                         .text_size(px(13.))
                         .font_medium()
                         .text_color(palette.fg)
-                        .child("No project open"),
+                        .child("No binary open"),
                 )
-                .child(open_folder(cx).mt_5()),
+                .child(open_binary(cx).mt_5()),
         )
 }
 
 // The "Go to" field's shape and fills: same height, radius and badge.
-fn open_folder(cx: &App) -> Button {
+fn open_binary(cx: &App) -> Button {
     let ink = cx.theme().foreground;
-    Button::new("open-folder")
+    Button::new("open-binary")
         .custom(
             ButtonCustomVariant::new(cx)
                 .foreground(ink.opacity(0.64))
@@ -71,9 +71,9 @@ fn open_folder(cx: &App) -> Button {
                 .pl(px(11.))
                 .pr(px(5.))
                 .text_size(px(12.5))
-                .child("Open Folder…")
+                .child("Open Binary…")
                 // Monospace, so the I reads as a letter rather than a bar.
                 .child(key_badge("I", cx).font_family(cx.theme().mono_font_family.clone())),
         )
-        .on_click(|_, window, cx| window.dispatch_action(OpenFolder.boxed_clone(), cx))
+        .on_click(|_, window, cx| window.dispatch_action(OpenBinary.boxed_clone(), cx))
 }

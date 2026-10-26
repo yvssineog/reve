@@ -4,9 +4,7 @@ mod palette;
 mod panes;
 
 use std::borrow::Cow;
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::path::PathBuf;
 
 use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
@@ -19,8 +17,9 @@ use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
 use palette::Palette;
+use panes::decompile::Decompile;
 use panes::listing::Listing;
-use panes::{not_ready, pane, project, symbols};
+use panes::{note, pane, symbols};
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
 // plus the panel toggle glyphs.
@@ -38,7 +37,6 @@ const ICONS: &[(&str, &[u8])] = icons![
     "caret-down",
     "magnifying-glass-bold",
     "folder-simple-duotone",
-    "file-duotone",
     "binary-duotone",
     "tree-structure-duotone",
     "cpu-duotone",
@@ -74,14 +72,14 @@ actions!(
     reve,
     [
         Quit,
-        OpenFolder,
+        OpenBinary,
         ToggleSidebar,
         ToggleBottom,
         ToggleAppearance
     ]
 );
 
-// The main view: the empty screen until a folder is open, then header, body, footer
+// The main view: the empty screen until a binary is open, then header, body, footer
 // stacked top to bottom.
 struct Reve {
     // Takes the app's shortcuts when no pane holds focus.
@@ -91,23 +89,21 @@ struct Reve {
     workspace: Option<Workspace>,
 }
 
-// An open folder and the panes showing it.
+// An open binary and the panes showing it.
 struct Workspace {
+    // The binary's file name.
     name: SharedString,
-    project: Entity<TreeState>,
-    // The project tree's ELF files, by id.
-    elf_files: Rc<HashSet<SharedString>>,
     analysis: Analysis,
 }
 
-// Where Ghidra is with the folder's binary.
+// Where Ghidra is with the binary.
 enum Analysis {
-    // The binary's file name.
-    Analyzing(SharedString),
+    Analyzing,
     Done {
         summary: SharedString,
         symbols: Entity<TreeState>,
         listing: Entity<Listing>,
+        decompile: Entity<Decompile>,
     },
     // Why, in one line.
     Failed(SharedString),
@@ -126,12 +122,12 @@ impl Reve {
         }
     }
 
-    // Asks the system's folder picker for a folder; cancelling leaves the empty screen, which
-    // also stays up while the folder is scanned.
-    fn open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
+    // Asks the system's file picker for the binary to analyze; cancelling leaves the empty
+    // screen.
+    fn open_binary(&mut self, _: &OpenBinary, window: &mut Window, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
+            files: true,
+            directories: false,
             multiple: false,
             prompt: Some("Open".into()),
         });
@@ -140,54 +136,26 @@ impl Reve {
             let Ok(Ok(Some(paths))) = picked.await else {
                 return;
             };
-            let Some(folder) = paths.into_iter().next() else {
+            let Some(binary) = paths.into_iter().next() else {
                 return;
             };
-            let scan = cx.background_spawn({
-                let folder = folder.clone();
-                async move { project::scan(&folder) }
-            });
-            let files = scan.await;
-            this.update_in(cx, |this, window, cx| this.open(&folder, files, window, cx))
+            this.update_in(cx, |this, window, cx| this.open(binary, window, cx))
                 .ok();
         })
         .detach();
     }
 
-    // Shows `folder` and starts analyzing its binary.
-    fn open(
-        &mut self,
-        folder: &Path,
-        files: Vec<project::File>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // A second pick made while the first folder was scanning loses; one workspace, one analysis.
+    // Shows `binary` and starts analyzing it.
+    fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // One workspace, one analysis.
         if self.workspace.is_some() {
             return;
         }
-        let target = project::target(&files);
-        let analysis = match target {
-            None => Analysis::Failed("No ELF binary in this folder".into()),
-            Some(target) => {
-                let name = SharedString::from(target.path.rsplit('/').next().unwrap().to_owned());
-                Self::analyze(folder.join(&target.path), name.clone(), window, cx);
-                Analysis::Analyzing(name)
-            }
-        };
-        // The root has no file name; it shows as `/`.
-        let name = folder.file_name().unwrap_or(folder.as_os_str());
+        let name = SharedString::from(binary.file_name().unwrap().to_string_lossy().into_owned());
+        Self::analyze(binary, name.clone(), window, cx);
         self.workspace = Some(Workspace {
-            name: name.to_string_lossy().into_owned().into(),
-            project: cx.new(|cx| project::state(&files, target, cx)),
-            elf_files: Rc::new(
-                files
-                    .iter()
-                    .filter(|file| file.elf)
-                    .map(|file| file.path.clone().into())
-                    .collect(),
-            ),
-            analysis,
+            name,
+            analysis: Analysis::Analyzing,
         });
         cx.notify();
     }
@@ -207,8 +175,8 @@ impl Reve {
         .detach();
     }
 
-    // Fills the Symbol Tree and Listing, or says why not. The listing takes focus unless the
-    // user has already put it in a pane.
+    // Fills the Symbol Tree, Listing and Decompile, or says why not. The listing takes focus
+    // unless the user has already put it in a pane.
     fn analyzed(
         &mut self,
         name: SharedString,
@@ -241,6 +209,7 @@ impl Reve {
                 );
                 let symbols = cx.new(|cx| symbols::state(&program, cx));
                 let listing = cx.new(|cx| Listing::new(program, cx));
+                let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
@@ -248,6 +217,7 @@ impl Reve {
                     summary: summary.into(),
                     symbols,
                     listing,
+                    decompile,
                 }
             }
         };
@@ -261,65 +231,59 @@ impl Render for Reve {
             return empty::screen(cx)
                 .track_focus(&self.focus)
                 .key_context(empty::CONTEXT)
-                .on_action(cx.listener(Self::open_folder))
+                .on_action(cx.listener(Self::open_binary))
                 .into_any_element();
         };
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
-        let elf_files = workspace.elf_files.clone();
-        let (symbols, listing) = match &workspace.analysis {
+        let (symbols, listing, decompile, decompiled) = match &workspace.analysis {
             Analysis::Done {
-                symbols, listing, ..
+                symbols,
+                listing,
+                decompile,
+                ..
             } => (
+                // Inset so the selected row's rounded fill clears the pane edges.
                 tree(symbols, symbols::row)
                     .flex_1()
                     .min_h_0()
                     .px(px(6.))
                     .into_any_element(),
                 listing.clone().into_any_element(),
+                decompile.clone().into_any_element(),
+                Some(decompile.read(cx).name()),
             ),
             _ => (
-                not_ready(cx).into_any_element(),
-                not_ready(cx).into_any_element(),
+                note("Not ready.", cx).into_any_element(),
+                note("Not ready.", cx).into_any_element(),
+                note("Not ready.", cx).into_any_element(),
+                None,
             ),
         };
         let (busy, status) = match &workspace.analysis {
-            Analysis::Analyzing(name) => (true, format!("Analyzing {name}…").into()),
+            Analysis::Analyzing => (true, format!("Analyzing {}…", workspace.name).into()),
             Analysis::Done { summary, .. } => (false, summary.clone()),
             Analysis::Failed(why) => (false, why.clone()),
         };
 
-        // Project above Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
+        // The Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
         let sidebar = resizable_panel()
             .visible(self.sidebar_open)
             .size(px(264.))
             .size_range(px(200.)..px(480.))
             .fixed()
             .child(
-                v_resizable("sidebar")
-                    .child(
-                        pane(
-                            theme,
-                            "folder-simple",
-                            palette.number,
-                            "Project",
-                            Some(workspace.name.clone()),
-                        )
-                        .child(
-                            // Inset so the selected row's rounded fill clears the pane edges.
-                            tree(&workspace.project, move |ix, entry, _, _, cx| {
-                                project::row(&elf_files, ix, entry, cx)
-                            })
-                            .flex_1()
-                            .min_h_0()
-                            .px(px(6.)),
-                        ),
+                v_resizable("sidebar").child(
+                    pane(
+                        theme,
+                        "tree-structure",
+                        palette.symbol,
+                        "Symbol Tree",
+                        Some(workspace.name.clone()),
                     )
-                    .child(
-                        pane(theme, "tree-structure", palette.symbol, "Symbol Tree", None)
-                            .child(symbols),
-                    ),
+                    .child(symbols),
+                ),
             );
 
         // Listing beside Decompile over the Functions window, on the darker content tint.
@@ -334,8 +298,14 @@ impl Render for Reve {
                                     .child(listing),
                             )
                             .child(
-                                pane(theme, "brackets-curly", palette.string, "Decompile", None)
-                                    .child(not_ready(cx)),
+                                pane(
+                                    theme,
+                                    "brackets-curly",
+                                    palette.string,
+                                    "Decompile",
+                                    decompiled,
+                                )
+                                .child(decompile),
                             ),
                     ),
                 )
@@ -345,7 +315,7 @@ impl Render for Reve {
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
                         .fixed()
-                        .child(not_ready(cx)),
+                        .child(note("Not ready.", cx)),
                 ),
         );
 
@@ -407,7 +377,7 @@ fn main() {
             key("secondary-q", Quit, cx),
             key("secondary-b", ToggleSidebar, cx),
             key("secondary-j", ToggleBottom, cx),
-            KeyBinding::new("i", OpenFolder, Some(empty::CONTEXT)),
+            KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
         ];
         cx.bind_keys(keys);
 

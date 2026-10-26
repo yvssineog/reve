@@ -15,14 +15,14 @@ const CONTEXT: &str = "Code";
 // Instructions a page key moves the cursor.
 const PAGE: isize = 24;
 // The height of every row.
-const ROW: Pixels = px(18.);
+pub const ROW: Pixels = px(18.);
 // Column widths, in 12px monospace characters: address 10, bytes 13, mnemonic 7,
 // operands 30. Labels start on the mnemonic column.
 const ADDRESS: Pixels = px(72.);
 const BYTES: Pixels = px(94.);
 const MNEMONIC: Pixels = px(51.);
 const OPERANDS: Pixels = px(217.);
-const GUTTER: Pixels = px(12.);
+pub const GUTTER: Pixels = px(12.);
 
 actions!(listing, [HalfPageDown, HalfPageUp]);
 
@@ -138,19 +138,26 @@ impl Listing {
 
     // Follows the call under the cursor to the function's entry.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        if let Some(function) = callee(&self.program, self.under_cursor())
+        let (_, instruction) = self.under_cursor();
+        if let Some(function) = callee(&self.program, instruction)
             && let Some(ix) = row_at(&self.instructions, function.entry)
         {
             self.jump(ix, ScrollStrategy::Center, cx);
         }
     }
 
-    // The instruction under the cursor.
-    fn under_cursor(&self) -> &Instruction {
+    // The function the cursor is in.
+    pub fn function(&self) -> &Function {
+        self.under_cursor().0
+    }
+
+    // The instruction under the cursor, and its function.
+    fn under_cursor(&self) -> (&Function, &Instruction) {
         let Row::Code(function, instruction) = self.rows[self.cursor] else {
             unreachable!("the cursor is always on an instruction");
         };
-        &self.program.functions[function].instructions[instruction]
+        let function = &self.program.functions[function];
+        (function, &function.instructions[instruction])
     }
 
     // Row `ix`, inset by the gutter, which will hold bookmarks.
@@ -376,6 +383,7 @@ mod tests {
             entry: Address(entry),
             size: 4 * instructions.len() as u64,
             instructions,
+            decompilation: None,
         }
     }
 

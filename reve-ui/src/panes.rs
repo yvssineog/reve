@@ -1,11 +1,13 @@
+pub mod decompile;
 pub mod listing;
-pub mod project;
 pub mod symbols;
 
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::resizable::{ResizablePanel, resizable_panel};
 use gpui_kit::component::tree::TreeEntry;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, h_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, h_flex, v_flex,
+};
 use gpui_kit::*;
 
 use crate::palette::Palette;
@@ -47,15 +49,18 @@ pub fn pane(
     )
 }
 
-// The body of a pane with nothing to show yet: one quiet line at the header's size.
-pub fn not_ready(cx: &App) -> Div {
-    h_flex()
+// The body of a pane with nothing to show: a quiet note at the header's size, centered,
+// wrapping when long.
+pub fn note(text: impl Into<SharedString>, cx: &App) -> Div {
+    v_flex()
         .flex_1()
         .min_h_0()
         .justify_center()
+        .px_4()
         .text_xs()
+        .text_center()
         .text_color(Palette::of(cx).fg_3)
-        .child("Not ready.")
+        .child(text.into())
 }
 
 // A compact tree row: indent, caret, icon in its hue, the label, then an optional detail on
