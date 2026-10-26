@@ -1,17 +1,18 @@
 mod header;
-mod project;
-mod symbols;
+mod palette;
+mod panes;
 
 use std::borrow::Cow;
 
 use gpui_kit::assets::Assets;
-use gpui_kit::component::list::ListItem;
-use gpui_kit::component::resizable::{ResizablePanel, h_resizable, resizable_panel, v_resizable};
-use gpui_kit::component::tree::{TreeEntry, TreeState, tree};
-use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, TitleBar, h_flex, v_flex,
-};
+use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::tree::{TreeState, tree};
+use gpui_kit::component::{ActiveTheme as _, Theme, TitleBar, v_flex};
 use gpui_kit::*;
+
+use palette::Palette;
+use panes::listing::Listing;
+use panes::{pane, project, symbols};
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
 // plus the panel toggle glyphs.
@@ -65,24 +66,27 @@ actions!(reve, [Quit, ToggleSidebar, ToggleBottom, ToggleAppearance]);
 
 // The main view: header, body, footer stacked top to bottom.
 struct Reve {
-    // Lets the view receive keyboard shortcuts.
+    // Takes the app's shortcuts when no pane holds focus.
     focus: FocusHandle,
     sidebar_open: bool,
     bottom_open: bool,
     project: Entity<TreeState>,
     symbols: Entity<TreeState>,
+    listing: Entity<Listing>,
 }
 
 impl Reve {
+    // Opens with the listing focused, so its keys work without a click first.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus = cx.focus_handle();
-        window.focus(&focus, cx);
+        let listing = cx.new(Listing::new);
+        window.focus(&listing.focus_handle(cx), cx);
         Self {
-            focus,
+            focus: cx.focus_handle(),
             sidebar_open: true,
             bottom_open: true,
             project: cx.new(project::state),
             symbols: cx.new(symbols::state),
+            listing,
         }
     }
 }
@@ -90,6 +94,7 @@ impl Reve {
 impl Render for Reve {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
+        let palette = Palette::of(cx);
         let theme = cx.theme();
 
         // Project above Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
@@ -104,7 +109,7 @@ impl Render for Reve {
                         pane(
                             theme,
                             "folder-simple",
-                            theme.cyan,
+                            palette.number,
                             "Project",
                             Some(project::NAME),
                         )
@@ -117,7 +122,7 @@ impl Render for Reve {
                         ),
                     )
                     .child(
-                        pane(theme, "tree-structure", theme.magenta, "Symbol Tree", None).child(
+                        pane(theme, "tree-structure", palette.symbol, "Symbol Tree", None).child(
                             tree(&self.symbols, symbols::row)
                                 .flex_1()
                                 .min_h_0()
@@ -133,18 +138,21 @@ impl Render for Reve {
                 .child(
                     resizable_panel().child(
                         h_resizable("code")
-                            .child(pane(theme, "cpu", theme.blue, "Listing", None))
+                            .child(
+                                pane(theme, "cpu", palette.mnemonic, "Listing", None)
+                                    .child(self.listing.clone()),
+                            )
                             .child(pane(
                                 theme,
                                 "brackets-curly",
-                                theme.green,
+                                palette.string,
                                 "Decompile",
                                 None,
                             )),
                     ),
                 )
                 .child(
-                    pane(theme, "function", theme.magenta, "Functions", None)
+                    pane(theme, "function", palette.symbol, "Functions", None)
                         .visible(self.bottom_open)
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
@@ -177,96 +185,6 @@ impl Render for Reve {
     }
 }
 
-// A pane: a header row (Phosphor duotone icon in the pane's hue + title + optional detail)
-// over the caller's body.
-fn pane(
-    theme: &Theme,
-    icon: &str,
-    hue: Hsla,
-    title: &'static str,
-    detail: Option<&'static str>,
-) -> ResizablePanel {
-    resizable_panel().flex_col().child(
-        h_flex()
-            .h(px(32.))
-            .flex_none()
-            .px_3()
-            .gap_2()
-            .text_xs()
-            .font_medium()
-            .text_color(theme.muted_foreground)
-            .child(
-                Icon::empty()
-                    .path(format!("icons/{icon}-duotone.svg"))
-                    .with_size(px(14.))
-                    .text_color(hue),
-            )
-            .child(title)
-            // Detail reads quieter than the title, in the same font and size so baselines line up.
-            .children(detail.map(|detail| {
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_normal()
-                    .text_color(theme.muted_foreground.opacity(0.7))
-                    .child(detail)
-            })),
-    )
-}
-
-// A compact tree row: indent, caret, icon in its hue, the label, then an optional detail on
-// the right. When narrow the label gives way first, cut with an ellipsis.
-fn tree_row(
-    ix: usize,
-    entry: &TreeEntry,
-    icon: &str,
-    hue: Hsla,
-    detail: Option<&'static str>,
-    cx: &App,
-) -> ListItem {
-    let theme = cx.theme();
-    let caret = match (entry.is_folder(), entry.is_expanded()) {
-        (false, _) => None,
-        (true, false) => Some("caret-right"),
-        (true, true) => Some("caret-down"),
-    };
-
-    ListItem::new(ix)
-        .h(px(24.))
-        .py_0()
-        .px(px(6.))
-        .rounded(px(6.))
-        .text_size(px(13.))
-        .child(
-            h_flex()
-                .gap_1()
-                .pl(px(16.) * entry.depth() as f32)
-                // Leaves keep an empty caret slot so their icons line up with folders'.
-                .child(div().flex_none().size(px(12.)).children(caret.map(|caret| {
-                    Icon::empty()
-                        .path(format!("icons/{caret}.svg"))
-                        .with_size(px(12.))
-                        .text_color(theme.muted_foreground)
-                })))
-                .child(
-                    Icon::empty()
-                        .path(format!("icons/{icon}.svg"))
-                        .with_size(px(14.))
-                        .text_color(hue),
-                )
-                .child(div().min_w_0().truncate().child(entry.item().label.clone()))
-                // Faint monospace at the label's size, so baselines line up.
-                .children(detail.map(|detail| {
-                    div()
-                        .ml_auto()
-                        .pl_2()
-                        .font_family(theme.mono_font_family.clone())
-                        .text_color(theme.muted_foreground.opacity(0.7))
-                        .child(detail)
-                })),
-        )
-}
-
 // A shortcut; "secondary" means Cmd on macOS and Ctrl elsewhere.
 fn key(keys: &str, action: impl Action, cx: &App) -> KeyBinding {
     KeyBinding::load(keys, Box::new(action), None, false, None, cx).unwrap()
@@ -276,6 +194,7 @@ fn main() {
     gpui_kit::application().with_assets(AppAssets).run(|cx| {
         // Set up gpui-kit (theme, components). Must run first.
         gpui_kit::init(cx);
+        panes::listing::init(cx);
 
         // Start in the system's light or dark mode.
         Theme::sync_system_appearance(None, cx);

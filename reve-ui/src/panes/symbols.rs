@@ -5,7 +5,8 @@ use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState};
 use gpui_kit::*;
 
-use crate::tree_row;
+use super::tree_row;
+use crate::palette::Palette;
 
 // TODO: the Ghidra adapter should provide these symbols (functions by namespace with addresses, imports by library) instead of this mock.
 #[rustfmt::skip]
@@ -76,19 +77,20 @@ fn items() -> Vec<TreeItem> {
     ]
 }
 
-// Functions in magenta with their address. Ghidra calls the ones nobody has named yet
-// `FUN_<address>`; those stay muted, so the color shows analysis progress. Imports in yellow.
+// Functions in the symbol hue with their address. Ghidra calls the ones nobody has named yet
+// `FUN_<address>`; those stay muted, so the color shows analysis progress. Imports in the external hue.
 pub fn row(ix: usize, entry: &TreeEntry, _: bool, _: &mut Window, cx: &mut App) -> ListItem {
     let theme = cx.theme();
+    let palette = Palette::of(cx);
     let item = entry.item();
     let function = FUNCTIONS.iter().find(|(address, ..)| *address == &*item.id);
     let (icon, hue, address) = if entry.is_folder() {
         ("folder-simple-duotone", theme.muted_foreground, None)
     } else if let Some((address, ..)) = function {
         let hue = if item.label.starts_with("FUN_") {
-            theme.muted_foreground
+            palette.fg_3
         } else {
-            theme.magenta
+            palette.symbol
         };
         (
             "function-duotone",
@@ -96,7 +98,7 @@ pub fn row(ix: usize, entry: &TreeEntry, _: bool, _: &mut Window, cx: &mut App) 
             Some(address.trim_start_matches('0')),
         )
     } else {
-        ("sign-in-duotone", theme.yellow, None)
+        ("sign-in-duotone", palette.external, None)
     };
     tree_row(ix, entry, icon, hue, address, cx)
 }

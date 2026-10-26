@@ -5207,10 +5207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reve-model"
+version = "0.1.0"
+
+[[package]]
 name = "reve-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "reve-model",
 ]
 
 [[package]]

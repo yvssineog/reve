@@ -5,7 +5,8 @@ use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState};
 use gpui_kit::*;
 
-use crate::tree_row;
+use super::tree_row;
+use crate::palette::Palette;
 
 // TODO: the Ghidra adapter should classify each file (container, executable, library, script, text) instead of this hand-labelled table.
 #[derive(Clone, Copy, PartialEq)]
@@ -72,13 +73,13 @@ fn items(dir: &str, paths: Vec<&'static str>) -> Vec<TreeItem> {
     folders.chain(files).collect()
 }
 
-// Binaries stand out in cyan; folders and other files stay muted.
+// Binaries stand out in the number hue; folders and other files stay muted.
 pub fn row(ix: usize, entry: &TreeEntry, _: bool, _: &mut Window, cx: &mut App) -> ListItem {
     let theme = cx.theme();
     let (icon, hue) = if entry.is_folder() {
         ("folder-simple-duotone", theme.muted_foreground)
     } else if FILES.contains(&(&*entry.item().id, Kind::Binary)) {
-        ("binary-duotone", theme.cyan)
+        ("binary-duotone", Palette::of(cx).number)
     } else {
         ("file-duotone", theme.muted_foreground)
     };
