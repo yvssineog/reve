@@ -1,0 +1,56 @@
+plugins {
+    id 'java'
+    id 'com.google.protobuf' version '0.9.5'
+}
+
+// Ghidra 12.2's extension build script uses these properties to package this
+// project as an installable extension.
+def ghidraInstallDir = System.getenv('GHIDRA_INSTALL_DIR') ?: project.findProperty('GHIDRA_INSTALL_DIR')
+if (!ghidraInstallDir) {
+    throw new GradleException('Set GHIDRA_INSTALL_DIR to the Ghidra 12.2 installation directory.')
+}
+
+apply from: new File(ghidraInstallDir, 'support/buildExtension.gradle')
+
+repositories {
+    mavenCentral()
+}
+
+def sharedProto = file('../../proto/engine.proto')
+
+sourceSets {
+    main {
+        proto {
+            srcDir sharedProto.parentFile
+            include sharedProto.name
+        }
+    }
+}
+
+protobuf {
+    protoc {
+        // Keep generated Java classes compatible with the protobuf runtime
+        // declared below. Rust code generation is handled separately by Cargo.
+        artifact = 'com.google.protobuf:protoc:4.31.0'
+    }
+}
+
+dependencies {
+    // Ghidra loads extension dependencies from the packaged extension's lib/.
+    implementation 'com.google.protobuf:protobuf-java:4.31.0'
+}
+
+tasks.named('compileJava') {
+    dependsOn tasks.named('generateProto')
+}
+
+// Ghidra's buildExtension script copies runtime dependencies into lib/. The
+// protobuf plugin also inspects runtime jars for bundled .proto include files.
+// Make that copy explicit in the task graph for Gradle 9's dependency checks.
+tasks.matching { it.name in ['extractIncludeProto', 'extractProto'] }.configureEach {
+    dependsOn tasks.named('copyDependencies')
+}
+
+tasks.named('buildExtension') {
+    dependsOn tasks.named('compileJava')
+}
