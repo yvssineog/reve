@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package reve.engine.v1;
+
+// Analysis result for one binary loaded by an analysis engine.
+message Program {
+  // Display name, usually the input file name.
+  string name = 1;
+
+  // Container format, for example "ELF".
+  string format = 2;
+
+  // Ghidra language identifier, for example "x86:LE:64:default".
+  string architecture = 3;
+
+  // Width of addresses in bits.
+  uint32 address_size_bits = 4;
+
+  // Functions recognized or imported by the analysis engine.
+  repeated Function functions = 5;
+}
+
+// A function recognized by the analysis engine.
+message Function {
+  string name = 1;
+
+  // Virtual address of the function entry point, not a file offset.
+  uint64 entry = 2;
+
+  // Function body size in bytes when known.
+  uint64 size = 3;
+
+  repeated Instruction instructions = 4;
+}
+
+// A decoded machine instruction.
+message Instruction {
+  // Virtual address in the program's address space, not a file offset.
+  uint64 address = 1;
+
+  uint32 size = 2;
+  string mnemonic = 3;
+
+  // Human-readable operand rendering; exact text can vary by language.
+  string operands = 4;
+
+  // Original instruction bytes.
+  bytes bytes = 5;
+}
