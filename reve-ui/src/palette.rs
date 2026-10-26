@@ -13,6 +13,8 @@ pub struct Palette {
     pub symbol: Hsla,
     pub string: Hsla,
     pub number: Hsla,
+    pub comment: Hsla,
+    pub external: Hsla,
 }
 
 impl Palette {
@@ -38,6 +40,9 @@ impl Palette {
             symbol: hue(0.784, 0.56, 0.127, 298.4),
             string: hue(0.794, 0.535, 0.15, 149.),
             number: hue(0.802, 0.545, 0.108, 224.6),
+            comment: hue(0.826, 0.55, 0.098, 86.3),
+            // Electron's 0.136 chroma leaves sRGB at the light lightness.
+            external: hue(0.805, 0.555, 0.13, 60.),
         }
     }
 }
