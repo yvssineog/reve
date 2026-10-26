@@ -78,7 +78,9 @@ pub fn row(
             .selected(selected)
             .when_some(target, |row, entry| {
                 row.on_click(move |_, _, cx| {
-                    listing.update(cx, |listing, cx| listing.go_to(entry, cx))
+                    listing.update(cx, |listing, cx| {
+                        listing.go_to(entry, ScrollStrategy::Center, cx)
+                    })
                 })
             })
     }

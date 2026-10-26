@@ -54,8 +54,9 @@ impl Functions {
     // Goes to the function at `entry` and hands the keyboard to the listing, so arrows walk
     // its code next.
     fn pick(&mut self, entry: Address, window: &mut Window, cx: &mut Context<Self>) {
-        self.listing
-            .update(cx, |listing, cx| listing.go_to(entry, cx));
+        self.listing.update(cx, |listing, cx| {
+            listing.go_to(entry, ScrollStrategy::Center, cx)
+        });
         window.focus(&self.listing.focus_handle(cx), cx);
     }
 

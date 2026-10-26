@@ -155,15 +155,15 @@ impl Listing {
     fn follow(&mut self, cx: &mut Context<Self>) {
         let (_, instruction) = self.under_cursor();
         if let Some(function) = callee(&self.program, instruction) {
-            self.go_to(function.entry, cx);
+            self.go_to(function.entry, ScrollStrategy::Center, cx);
         }
     }
 
-    // Puts the cursor on the function entry at `entry`, centered. Every pane follows the
-    // cursor, so this is how any of them goes to a function.
-    pub fn go_to(&mut self, entry: Address, cx: &mut Context<Self>) {
-        if let Some(ix) = row_at(&self.instructions, entry) {
-            self.jump(ix, ScrollStrategy::Center, cx);
+    // Puts the cursor on the instruction at `address`. Every pane follows the cursor, so this
+    // is how any of them goes somewhere.
+    pub fn go_to(&mut self, address: Address, strategy: ScrollStrategy, cx: &mut Context<Self>) {
+        if let Some(ix) = row_at(&self.instructions, address) {
+            self.jump(ix, strategy, cx);
         }
     }
 

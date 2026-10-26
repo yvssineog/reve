@@ -53,6 +53,16 @@ impl Line {
     fn holds(&self, address: Address) -> bool {
         self.addresses.binary_search(&address).is_ok()
     }
+
+    // Where pressing the line takes the cursor: its first instruction, or nowhere when the
+    // cursor is on one of its instructions already or it has none.
+    fn target(&self, cursor: Address) -> Option<Address> {
+        if self.holds(cursor) {
+            None
+        } else {
+            self.addresses.first().copied()
+        }
+    }
 }
 
 impl Decompile {
@@ -102,6 +112,18 @@ impl Decompile {
         }
         cx.notify();
     }
+
+    // Moves the listing cursor to where pressing line `ix` points, then hands the keyboard to
+    // the listing.
+    fn pick(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let lines = self.code.as_deref().unwrap_or_default();
+        if let Some(address) = lines.get(ix).and_then(|line| line.target(self.address)) {
+            self.listing.update(cx, |listing, cx| {
+                listing.go_to(address, ScrollStrategy::Nearest, cx)
+            });
+        }
+        window.focus(&self.listing.focus_handle(cx), cx);
+    }
 }
 
 impl Render for Decompile {
@@ -128,19 +150,38 @@ impl Render for Decompile {
                     cx.processor(|this, range: Range<usize>, _, cx| {
                         let palette = Palette::of(cx);
                         let lines = this.code.as_deref().unwrap_or_default();
-                        lines[range]
-                            .iter()
-                            .map(|line| {
+                        range
+                            .map(|ix| {
+                                let line = &lines[ix];
                                 let spans = line.spans.iter().filter_map(|(span, kind)| {
                                     Some((span.clone(), hue(*kind, &palette)?.into()))
                                 });
                                 let text =
                                     StyledText::new(line.text.clone()).with_highlights(spans);
+                                // Lines that came from code take a press, like listing rows.
+                                let code = !line.addresses.is_empty();
                                 div()
+                                    .id(ix)
                                     .h(ROW)
                                     .w_full()
                                     .px(GUTTER)
-                                    .when(line.holds(this.address), |row| row.bg(palette.cursor))
+                                    .map(|row| {
+                                        if line.holds(this.address) {
+                                            row.bg(palette.cursor)
+                                        } else if code {
+                                            row.hover(|row| row.bg(palette.fg.opacity(0.04)))
+                                        } else {
+                                            row
+                                        }
+                                    })
+                                    .when(code, |row| {
+                                        row.on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.pick(ix, window, cx)
+                                            }),
+                                        )
+                                    })
                                     .child(text)
                                     .into_any_element()
                             })
@@ -281,9 +322,14 @@ mod tests {
     fn lines_hold_the_instructions_they_came_from() {
         let mut source = line(&[("x = 1;", TokenKind::Plain)]);
         source.addresses = vec![Address(0x1004), Address(0x1008)];
-        let line = Line::new(&source);
-        assert!(line.holds(Address(0x1004)) && line.holds(Address(0x1008)));
-        assert!(!line.holds(Address(0x1006)));
+        let mapped = Line::new(&source);
+        assert!(mapped.holds(Address(0x1004)) && mapped.holds(Address(0x1008)));
+        assert!(!mapped.holds(Address(0x1006)));
+
+        assert_eq!(mapped.target(Address(0x1000)), Some(Address(0x1004)));
+        assert_eq!(mapped.target(Address(0x1008)), None, "the cursor is on it");
+        let declaration = Line::new(&line(&[("int x;", TokenKind::Plain)]));
+        assert_eq!(declaration.target(Address(0x1000)), None, "no code");
     }
 
     #[test]
