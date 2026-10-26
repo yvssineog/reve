@@ -13,3 +13,6 @@ pub mod proto {
         }
     }
 }
+
+/// Read Ghidra's protobuf export and convert it to the shared Rust model.
+pub mod export;

@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+reve-model = { path = "../model" }
 prost = "0.14.4"
 
 [build-dependencies]
