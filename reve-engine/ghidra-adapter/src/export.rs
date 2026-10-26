@@ -3,7 +3,10 @@
 use std::{fs, io, path::Path};
 
 use prost::Message;
-use reve_model::{Address, Decompilation, DecompilationStatus, Function, Instruction, Program};
+use reve_model::{
+    Address, Decompilation, DecompilationStatus, Function, Instruction, Line, Program, Token,
+    TokenKind,
+};
 
 use crate::proto::reve::engine::v1 as wire;
 
@@ -96,6 +99,35 @@ fn decompilation_into_model(message: wire::Decompilation) -> Decompilation {
         signature: message.signature,
         c_code: message.c_code,
         error_message: message.error_message,
+        lines: message.lines.into_iter().map(line_into_model).collect(),
+    }
+}
+
+fn line_into_model(message: wire::Line) -> Line {
+    Line {
+        tokens: message.tokens.into_iter().map(token_into_model).collect(),
+        addresses: message.addresses.into_iter().map(Address).collect(),
+    }
+}
+
+fn token_into_model(message: wire::Token) -> Token {
+    use wire::token::Kind;
+    let kind = match Kind::try_from(message.kind) {
+        Ok(Kind::Keyword) => TokenKind::Keyword,
+        Ok(Kind::Comment) => TokenKind::Comment,
+        Ok(Kind::Type) => TokenKind::Type,
+        Ok(Kind::Function) => TokenKind::Function,
+        Ok(Kind::Variable) => TokenKind::Variable,
+        Ok(Kind::Constant) => TokenKind::Constant,
+        Ok(Kind::Parameter) => TokenKind::Parameter,
+        Ok(Kind::Global) => TokenKind::Global,
+        Ok(Kind::Error) => TokenKind::Error,
+        Ok(Kind::Special) => TokenKind::Special,
+        Ok(Kind::Plain) | Err(_) => TokenKind::Plain,
+    };
+    Token {
+        text: message.text,
+        kind,
     }
 }
 
@@ -148,6 +180,7 @@ mod tests {
             signature: signature.into(),
             c_code: c_code.into(),
             error_message: error_message.map(str::to_owned),
+            lines: Vec::new(),
         }
     }
 
@@ -188,6 +221,58 @@ mod tests {
         assert_eq!(decompilation.signature, "int entry(void)");
         assert_eq!(decompilation.c_code, "int entry(void) { return 42; }");
         assert_eq!(decompilation.error_message, None);
+    }
+
+    #[test]
+    fn into_model_keeps_token_kinds_and_line_addresses() {
+        let token = |text: &str, kind: wire::token::Kind| wire::Token {
+            text: text.into(),
+            kind: kind as i32,
+        };
+        let mut decompilation = sample_decompilation(
+            wire::decompilation::Status::Succeeded,
+            "",
+            "  return 42;",
+            None,
+        );
+        decompilation.lines = vec![wire::Line {
+            tokens: vec![
+                token("  ", wire::token::Kind::Plain),
+                token("return", wire::token::Kind::Keyword),
+                token(" ", wire::token::Kind::Plain),
+                token("42", wire::token::Kind::Constant),
+                wire::Token {
+                    text: ";".into(),
+                    kind: i32::MAX,
+                },
+            ],
+            addresses: vec![0x1004, u64::MAX],
+        }];
+        let mut message = sample_message();
+        message.functions[0].decompilation = Some(decompilation);
+
+        let model = into_model(message);
+        let line = &model.functions[0].decompilation.as_ref().unwrap().lines[0];
+
+        let kinds: Vec<_> = line.tokens.iter().map(|token| token.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                TokenKind::Plain,
+                TokenKind::Keyword,
+                TokenKind::Plain,
+                TokenKind::Constant,
+                TokenKind::Plain,
+            ],
+            "unknown kinds read as plain",
+        );
+        let text: String = line
+            .tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect();
+        assert_eq!(text, "  return 42;");
+        assert_eq!(line.addresses, [Address(0x1004), Address(u64::MAX)]);
     }
 
     #[test]
@@ -257,6 +342,7 @@ mod tests {
             signature: String::new(),
             c_code: String::new(),
             error_message: None,
+            lines: Vec::new(),
         });
 
         let model = into_model(message);

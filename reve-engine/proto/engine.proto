@@ -57,6 +57,39 @@ message Decompilation {
 
   // Diagnostic supplied by the decompiler when it failed or timed out.
   optional string error_message = 4;
+
+  // The same pseudocode as Ghidra's markup, one entry per line. Empty when
+  // decompilation did not succeed.
+  repeated Line lines = 5;
+}
+
+// One line of decompiled C.
+message Line {
+  // The line's text in order, indentation first.
+  repeated Token tokens = 1;
+
+  // Ascending addresses of the instructions this line's tokens came from.
+  repeated uint64 addresses = 2;
+}
+
+// A run of decompiled C and the syntax class Ghidra gives it.
+message Token {
+  enum Kind {
+    PLAIN = 0;
+    KEYWORD = 1;
+    COMMENT = 2;
+    TYPE = 3;
+    FUNCTION = 4;
+    VARIABLE = 5;
+    CONSTANT = 6;
+    PARAMETER = 7;
+    GLOBAL = 8;
+    ERROR = 9;
+    SPECIAL = 10;
+  }
+
+  string text = 1;
+  Kind kind = 2;
 }
 
 // A decoded machine instruction.

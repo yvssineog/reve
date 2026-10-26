@@ -45,6 +45,43 @@ pub struct Decompilation {
     pub c_code: String,
     /// Diagnostic from the decompiler on failure or timeout.
     pub error_message: Option<String>,
+    /// The same pseudocode as the decompiler's markup, one entry per line.
+    pub lines: Vec<Line>,
+}
+
+/// One line of decompiled C.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Line {
+    /// The line's text in order, indentation first.
+    pub tokens: Vec<Token>,
+    /// Ascending addresses of the instructions this line's tokens came from.
+    pub addresses: Vec<Address>,
+}
+
+/// A run of decompiled C and its syntax class.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Token {
+    pub text: String,
+    pub kind: TokenKind,
+}
+
+/// The decompiler's syntax class for a token, the one Ghidra colors it by.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TokenKind {
+    /// Punctuation, operators and whitespace.
+    #[default]
+    Plain,
+    Keyword,
+    Comment,
+    Type,
+    Function,
+    Variable,
+    Constant,
+    Parameter,
+    Global,
+    Error,
+    /// Decompiler annotations such as `<unknown>` or bit-range markers.
+    Special,
 }
 
 /// Outcome of a function's decompilation attempt.

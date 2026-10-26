@@ -1,8 +1,13 @@
 // Export the analyzed program currently open in Ghidra as a reve.engine.v1.Program.
 import ghidra.app.script.GhidraScript;
+import ghidra.app.decompiler.ClangLine;
+import ghidra.app.decompiler.ClangToken;
+import ghidra.app.decompiler.ClangTokenGroup;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
+import ghidra.app.decompiler.component.DecompilerUtils;
+import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
@@ -20,6 +25,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.TreeSet;
 
 public class Export extends GhidraScript {
 	private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
@@ -147,17 +153,61 @@ public class Export extends GhidraScript {
 				return failedDecompilation("Ghidra completed decompilation without returning C code.");
 			}
 
-			return Engine.Decompilation.newBuilder()
+			Engine.Decompilation.Builder result = Engine.Decompilation.newBuilder()
 				.setStatus(Engine.Decompilation.Status.SUCCEEDED)
 				.setSignature(nullToEmpty(decompiled.getSignature()))
-				.setCCode(nullToEmpty(decompiled.getC()))
-				.build();
+				.setCCode(nullToEmpty(decompiled.getC()));
+			ClangTokenGroup markup = results.getCCodeMarkup();
+			if (markup != null) {
+				for (ClangLine line : DecompilerUtils.toLines(markup)) {
+					result.addLines(collectLine(line));
+				}
+			}
+			return result.build();
 		} catch (Exception error) {
 			if (error instanceof CancelledException || monitor.isCancelled()) {
 				throw error;
 			}
 			return failedDecompilation(exceptionMessage(error));
 		}
+	}
+
+	private Engine.Line collectLine(ClangLine line) {
+		Engine.Line.Builder result = Engine.Line.newBuilder();
+		String indent = line.getIndentString();
+		if (!indent.isEmpty()) {
+			result.addTokens(Engine.Token.newBuilder().setText(indent));
+		}
+		TreeSet<Long> addresses = new TreeSet<>(Long::compareUnsigned);
+		for (ClangToken token : line.getAllTokens()) {
+			String text = token.getText();
+			if (text != null && !text.isEmpty()) {
+				result.addTokens(Engine.Token.newBuilder()
+					.setText(text)
+					.setKind(tokenKind(token.getSyntaxType())));
+			}
+			Address address = token.getMinAddress();
+			if (address != null) {
+				addresses.add(address.getUnsignedOffset());
+			}
+		}
+		return result.addAllAddresses(addresses).build();
+	}
+
+	private Engine.Token.Kind tokenKind(int syntaxType) {
+		return switch (syntaxType) {
+			case ClangToken.KEYWORD_COLOR -> Engine.Token.Kind.KEYWORD;
+			case ClangToken.COMMENT_COLOR -> Engine.Token.Kind.COMMENT;
+			case ClangToken.TYPE_COLOR -> Engine.Token.Kind.TYPE;
+			case ClangToken.FUNCTION_COLOR -> Engine.Token.Kind.FUNCTION;
+			case ClangToken.VARIABLE_COLOR -> Engine.Token.Kind.VARIABLE;
+			case ClangToken.CONST_COLOR -> Engine.Token.Kind.CONSTANT;
+			case ClangToken.PARAMETER_COLOR -> Engine.Token.Kind.PARAMETER;
+			case ClangToken.GLOBAL_COLOR -> Engine.Token.Kind.GLOBAL;
+			case ClangToken.ERROR_COLOR -> Engine.Token.Kind.ERROR;
+			case ClangToken.SPECIAL_COLOR -> Engine.Token.Kind.SPECIAL;
+			default -> Engine.Token.Kind.PLAIN;
+		};
 	}
 
 	private Engine.Decompilation failedDecompilation(String message) {

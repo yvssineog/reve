@@ -182,6 +182,7 @@ mod tests {
                         signature: "void success(void)".into(),
                         c_code: "void success(void) {}".into(),
                         error_message: None,
+                        lines: Vec::new(),
                     }),
                 ),
                 function(
@@ -191,6 +192,7 @@ mod tests {
                         signature: String::new(),
                         c_code: String::new(),
                         error_message: Some("failed".into()),
+                        lines: Vec::new(),
                     }),
                 ),
                 function(
@@ -200,6 +202,7 @@ mod tests {
                         signature: "void empty_success(void)".into(),
                         c_code: "  \n".into(),
                         error_message: None,
+                        lines: Vec::new(),
                     }),
                 ),
                 function("absent", None),
