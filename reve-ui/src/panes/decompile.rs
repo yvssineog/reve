@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use reve_model::{Address, Decompilation, DecompilationStatus, TokenKind};
 
@@ -9,11 +10,14 @@ use super::listing::{GUTTER, Listing, ROW};
 use super::note;
 use crate::palette::Palette;
 
-// The function the listing cursor is in, as Ghidra decompiled it.
+// The function the listing cursor is in, as Ghidra decompiled it, with the lines the cursor's
+// instruction became marked.
 pub struct Decompile {
     listing: Entity<Listing>,
     // The shown function's entry.
     entry: Address,
+    // The cursor's instruction.
+    address: Address,
     name: SharedString,
     // Its C, one line each, or why there is none.
     code: Result<Vec<Line>, SharedString>,
@@ -21,11 +25,13 @@ pub struct Decompile {
     _sync: Subscription,
 }
 
-// A line of C and the syntax class of each of its spans.
+// A line of C, the syntax class of each of its spans, and the instructions it came from.
 #[derive(Debug, PartialEq)]
 struct Line {
     text: SharedString,
     spans: Vec<(Range<usize>, TokenKind)>,
+    // Ascending.
+    addresses: Vec<Address>,
 }
 
 impl Line {
@@ -40,7 +46,12 @@ impl Line {
         Self {
             text: text.into(),
             spans,
+            addresses: line.addresses.clone(),
         }
+    }
+
+    fn holds(&self, address: Address) -> bool {
+        self.addresses.binary_search(&address).is_ok()
     }
 }
 
@@ -48,9 +59,11 @@ impl Decompile {
     // Opens on the listing cursor's function and follows the cursor from there.
     pub fn new(listing: Entity<Listing>, cx: &mut Context<Self>) -> Self {
         let sync = cx.observe(&listing, |this, _, cx| this.sync(cx));
-        let function = listing.read(cx).function();
+        let cursor = listing.read(cx);
+        let function = cursor.function();
         Self {
             entry: function.entry,
+            address: cursor.address(),
             name: function.name.clone().into(),
             code: code(function.decompilation.as_ref()),
             listing,
@@ -65,20 +78,28 @@ impl Decompile {
     }
 
     // Shows the listing cursor's function, opened at the top, once the cursor leaves the
-    // one shown.
+    // one shown. Then brings the first line the cursor's instruction became into view.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let function = self.listing.read(cx).function();
-        if function.entry == self.entry {
+        let listing = self.listing.read(cx);
+        let (function, address) = (listing.function(), listing.address());
+        if function.entry == self.entry && address == self.address {
             return;
         }
-        self.entry = function.entry;
-        self.name = function.name.clone().into();
-        self.code = code(function.decompilation.as_ref());
-        self.scroll
-            .0
-            .borrow()
-            .base_handle
-            .set_offset(Point::default());
+        if function.entry != self.entry {
+            self.entry = function.entry;
+            self.name = function.name.clone().into();
+            self.code = code(function.decompilation.as_ref());
+            self.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(Point::default());
+        }
+        self.address = address;
+        let lines = self.code.as_deref().unwrap_or_default();
+        if let Some(ix) = lines.iter().position(|line| line.holds(address)) {
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
         cx.notify();
     }
 }
@@ -115,7 +136,13 @@ impl Render for Decompile {
                                 });
                                 let text =
                                     StyledText::new(line.text.clone()).with_highlights(spans);
-                                div().h(ROW).px(GUTTER).child(text).into_any_element()
+                                div()
+                                    .h(ROW)
+                                    .w_full()
+                                    .px(GUTTER)
+                                    .when(line.holds(this.address), |row| row.bg(palette.cursor))
+                                    .child(text)
+                                    .into_any_element()
                             })
                             .collect()
                     }),
@@ -180,7 +207,7 @@ fn code(decompilation: Option<&Decompilation>) -> Result<Vec<Line>, SharedString
 #[cfg(test)]
 mod tests {
     use gpui_kit::SharedString;
-    use reve_model::{Decompilation, DecompilationStatus, Token, TokenKind};
+    use reve_model::{Address, Decompilation, DecompilationStatus, Token, TokenKind};
 
     use super::{Line, code};
 
@@ -248,6 +275,15 @@ mod tests {
             reason("No decompilation."),
             "blank code",
         );
+    }
+
+    #[test]
+    fn lines_hold_the_instructions_they_came_from() {
+        let mut source = line(&[("x = 1;", TokenKind::Plain)]);
+        source.addresses = vec![Address(0x1004), Address(0x1008)];
+        let line = Line::new(&source);
+        assert!(line.holds(Address(0x1004)) && line.holds(Address(0x1008)));
+        assert!(!line.holds(Address(0x1006)));
     }
 
     #[test]

@@ -161,6 +161,11 @@ impl Listing {
         self.under_cursor().0
     }
 
+    // The address of the instruction under the cursor.
+    pub fn address(&self) -> Address {
+        self.under_cursor().1.address
+    }
+
     // The instruction under the cursor, and its function.
     fn under_cursor(&self) -> (&Function, &Instruction) {
         let Row::Code(function, instruction) = self.rows[self.cursor] else {
