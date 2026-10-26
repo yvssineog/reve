@@ -78,6 +78,7 @@ fn function_into_model(message: wire::Function) -> Function {
             .into_iter()
             .map(instruction_into_model)
             .collect(),
+        decompilation: None,
     }
 }
 
@@ -114,6 +115,7 @@ mod tests {
                     operands: "rax, rbx".into(),
                     bytes: vec![0x48, 0x89],
                 }],
+                decompilation: None,
             }],
         }
     }

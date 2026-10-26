@@ -126,6 +126,7 @@ mod tests {
                     entry: Address(index),
                     size: 3,
                     instructions: Vec::new(),
+                    decompilation: None,
                 })
                 .collect(),
         };

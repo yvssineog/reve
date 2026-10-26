@@ -33,6 +33,7 @@ pub fn program() -> Program {
                 .map(|instruction| u64::from(instruction.size))
                 .sum(),
             instructions,
+            decompilation: None,
         }
     });
     Program {

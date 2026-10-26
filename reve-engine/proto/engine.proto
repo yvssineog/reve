@@ -31,6 +31,32 @@ message Function {
   uint64 size = 3;
 
   repeated Instruction instructions = 4;
+
+  // Optional decompiler result. May be absent when reading an older export
+  // that predates decompilation support.
+  Decompilation decompilation = 5;
+}
+
+// C-like pseudocode produced by the engine's decompiler for one function.
+message Decompilation {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    SUCCEEDED = 1;
+    FAILED = 2;
+    TIMED_OUT = 3;
+    NOT_ATTEMPTED = 4;
+  }
+
+  Status status = 1;
+
+  // Decompiled function signature, when available.
+  string signature = 2;
+
+  // C-like pseudocode. Empty when decompilation did not succeed.
+  string c_code = 3;
+
+  // Diagnostic supplied by the decompiler when it failed or timed out.
+  optional string error_message = 4;
 }
 
 // A decoded machine instruction.
