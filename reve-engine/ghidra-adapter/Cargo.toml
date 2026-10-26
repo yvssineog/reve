@@ -1,0 +1,12 @@
+[package]
+name = "reve-ghidra-adapter"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+prost = "0.14.4"
+
+[build-dependencies]
+prost-build = "0.14.4"
+protoc-bin-vendored = "3.3.0"
