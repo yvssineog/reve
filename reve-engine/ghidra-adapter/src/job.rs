@@ -1,8 +1,7 @@
 //! Unique temporary directories used by individual analysis jobs.
 
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -28,6 +27,13 @@ impl JobDirectory {
             path: projects_root.to_path_buf(),
             source,
         })?;
+        let projects_root =
+            projects_root
+                .canonicalize()
+                .map_err(|source| ParserError::JobDirectory {
+                    path: projects_root.to_path_buf(),
+                    source,
+                })?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -36,10 +42,8 @@ impl JobDirectory {
 
         for _ in 0..100 {
             let id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
-            let path = projects_root.join(format!(
-                "reve-job-{}-{timestamp}-{id}",
-                std::process::id()
-            ));
+            let path =
+                projects_root.join(format!("reve-job-{}-{timestamp}-{id}", std::process::id()));
 
             match fs::create_dir(&path) {
                 Ok(()) => return Ok(Self { path }),
@@ -49,7 +53,7 @@ impl JobDirectory {
         }
 
         Err(ParserError::JobDirectory {
-            path: projects_root.to_path_buf(),
+            path: projects_root,
             source: io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "could not allocate a unique analysis directory after 100 attempts",

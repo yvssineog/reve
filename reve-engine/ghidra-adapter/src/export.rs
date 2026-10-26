@@ -60,7 +60,11 @@ pub fn into_model(message: wire::Program) -> Program {
         format: message.format,
         architecture: message.architecture,
         address_size_bits: message.address_size_bits,
-        functions: message.functions.into_iter().map(function_into_model).collect(),
+        functions: message
+            .functions
+            .into_iter()
+            .map(function_into_model)
+            .collect(),
     }
 }
 

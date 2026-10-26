@@ -1,12 +1,6 @@
 //! Configuration and validation for the local Ghidra Headless installation.
 
-use std::{
-    env,
-    error::Error,
-    fmt,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{env, error::Error, fmt, path::PathBuf, time::Duration};
 
 /// Names of environment variables used by [`GhidraConfig::from_environment`].
 pub const GHIDRA_HEADLESS_ENV: &str = "GHIDRA_HEADLESS";
@@ -70,7 +64,9 @@ impl GhidraConfig {
         }
 
         if self.projects_dir.exists() && !self.projects_dir.is_dir() {
-            return Err(ConfigError::ProjectsPathNotDirectory(self.projects_dir.clone()));
+            return Err(ConfigError::ProjectsPathNotDirectory(
+                self.projects_dir.clone(),
+            ));
         }
 
         if self.timeout.is_zero() {
@@ -109,7 +105,10 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingEnvironmentVariable(name) => {
-                write!(formatter, "required environment variable {name} is missing or empty")
+                write!(
+                    formatter,
+                    "required environment variable {name} is missing or empty"
+                )
             }
             Self::HeadlessNotFound(path) => write!(
                 formatter,
@@ -127,7 +126,10 @@ impl fmt::Display for ConfigError {
                 path.display()
             ),
             Self::EmptyProjectsPath => write!(formatter, "Ghidra projects path cannot be empty"),
-            Self::ZeroTimeout => write!(formatter, "Ghidra analysis timeout must be greater than zero"),
+            Self::ZeroTimeout => write!(
+                formatter,
+                "Ghidra analysis timeout must be greater than zero"
+            ),
         }
     }
 }

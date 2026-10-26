@@ -25,3 +25,6 @@ pub mod export;
 
 /// Per-analysis temporary project and export files.
 pub(crate) mod job;
+
+/// Launch and wait for Ghidra Headless.
+pub(crate) mod headless;

@@ -17,6 +17,8 @@ pub enum ParserError {
     JobDirectory { path: PathBuf, source: io::Error },
     /// The Ghidra process could not be started.
     ProcessStart(io::Error),
+    /// Capturing Ghidra's standard output or standard error failed.
+    ProcessOutput(io::Error),
     /// Ghidra reported a non-success exit status.
     GhidraFailed {
         status: ExitStatus,
@@ -44,7 +46,9 @@ impl fmt::Display for ParserError {
             Self::InputNotFile(path) => {
                 write!(formatter, "input binary is not a file: {}", path.display())
             }
-            Self::Configuration(error) => write!(formatter, "invalid Ghidra configuration: {error}"),
+            Self::Configuration(error) => {
+                write!(formatter, "invalid Ghidra configuration: {error}")
+            }
             Self::JobDirectory { path, source } => write!(
                 formatter,
                 "could not create analysis directory {}: {source}",
@@ -52,6 +56,12 @@ impl fmt::Display for ParserError {
             ),
             Self::ProcessStart(error) => {
                 write!(formatter, "could not start Ghidra Headless: {error}")
+            }
+            Self::ProcessOutput(error) => {
+                write!(
+                    formatter,
+                    "could not capture Ghidra Headless output: {error}"
+                )
             }
             Self::GhidraFailed {
                 status,
@@ -82,7 +92,9 @@ impl Error for ParserError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Configuration(error) => Some(error),
-            Self::JobDirectory { source, .. } | Self::ProcessStart(source) => Some(source),
+            Self::JobDirectory { source, .. }
+            | Self::ProcessStart(source)
+            | Self::ProcessOutput(source) => Some(source),
             Self::Export(error) => Some(error),
             Self::InputNotFound(_)
             | Self::InputNotFile(_)
