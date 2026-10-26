@@ -10,7 +10,9 @@ use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tree::{TreeState, tree};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, Theme, TitleBar, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Sizable as _, Theme, ThemeRegistry, TitleBar, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
@@ -368,6 +370,12 @@ fn main() {
         // Set up gpui-kit (theme, components). Must run first.
         gpui_kit::init(cx);
         panes::listing::init(cx);
+
+        // Dark is warm greys from oklch(0.203 0.0032 17.4) up, not the kit's near-black.
+        ThemeRegistry::global_mut(cx)
+            .load_themes_from_str(include_str!("../assets/themes/dark.json"))
+            .unwrap();
+        Theme::global_mut(cx).dark_theme = ThemeRegistry::global(cx).themes()["rêve Dark"].clone();
 
         // Start in the system's light or dark mode.
         Theme::sync_system_appearance(None, cx);

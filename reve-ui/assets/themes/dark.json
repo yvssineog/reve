@@ -1,0 +1,30 @@
+{
+  "name": "rêve",
+  "themes": [
+    {
+      "name": "rêve Dark",
+      "mode": "dark",
+      "colors": {
+        "background": "#181616",
+        "title_bar.background": "#1f1d1d",
+        "title_bar.border": "#2d2b2b",
+        "status_bar.background": "#1f1d1d",
+        "status_bar.border": "#2d2b2b",
+        "sidebar.background": "#1f1d1d",
+        "sidebar.border": "#2d2b2b",
+        "window.border": "#2d2b2b",
+        "border": "#2d2b2b",
+        "input.border": "#343232",
+        "popover.background": "#242222",
+        "accent.background": "#2c2929",
+        "muted.background": "#2c2929",
+        "secondary.background": "#2c2929",
+        "secondary.hover.background": "#2f2d2d",
+        "secondary.active.background": "#282626",
+        "list.hover.background": "#2c292980",
+        "scrollbar.thumb.background": "#4f4c4ce6",
+        "scrollbar.thumb.hover.background": "#5f5d5d"
+      }
+    }
+  ]
+}
