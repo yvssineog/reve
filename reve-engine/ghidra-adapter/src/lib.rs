@@ -14,5 +14,14 @@ pub mod proto {
     }
 }
 
+/// Configuration for locating and running Ghidra Headless.
+pub mod config;
+
+/// Errors returned by the Ghidra adapter.
+pub mod error;
+
 /// Read Ghidra's protobuf export and convert it to the shared Rust model.
 pub mod export;
+
+/// Per-analysis temporary project and export files.
+pub(crate) mod job;
