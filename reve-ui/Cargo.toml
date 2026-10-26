@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 gpui-kit = "0.8.1"
+reve-ghidra-adapter = { path = "../reve-engine/ghidra-adapter" }
 reve-model = { path = "../reve-engine/model" }
 
 [[bin]]

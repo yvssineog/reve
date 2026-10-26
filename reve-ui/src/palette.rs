@@ -11,10 +11,8 @@ pub struct Palette {
     pub cursor: Hsla,
     pub mnemonic: Hsla,
     pub symbol: Hsla,
-    pub external: Hsla,
     pub string: Hsla,
     pub number: Hsla,
-    pub comment: Hsla,
 }
 
 impl Palette {
@@ -38,10 +36,8 @@ impl Palette {
             cursor: oklch(0.682, 0.178, 246.6).opacity(0.2),
             mnemonic: hue(0.768, 0.55, 0.121, 254.1),
             symbol: hue(0.784, 0.56, 0.127, 298.4),
-            external: hue(0.805, 0.56, 0.136, 60.),
             string: hue(0.794, 0.535, 0.15, 149.),
             number: hue(0.802, 0.545, 0.108, 224.6),
-            comment: hue(0.826, 0.55, 0.098, 86.3),
         }
     }
 }

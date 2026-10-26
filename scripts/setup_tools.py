@@ -112,6 +112,12 @@ def safe_extract_zip(archive: Path, destination: Path) -> None:
             if target != root and root not in target.parents:
                 raise RuntimeError(f"Unsafe path in archive: {entry.filename}")
         zipped.extractall(destination)
+        # extractall drops Unix permissions, so launchers like analyzeHeadless lose their
+        # executable bit.
+        for entry in zipped.infolist():
+            mode = (entry.external_attr >> 16) & 0o777
+            if mode:
+                (destination / entry.filename).chmod(mode)
 
 
 def safe_extract_tar(archive: Path, destination: Path) -> None:
@@ -161,7 +167,11 @@ def install_archive(
         extracted = staging / expected_top_dir
     else:
         java_executable = "java.exe" if os.name == "nt" else "java"
-        candidates = list(staging.glob(f"*/bin/{java_executable}"))
+        # macOS archives nest the JDK root inside an app bundle.
+        candidates = [
+            *staging.glob(f"*/bin/{java_executable}"),
+            *staging.glob(f"*/Contents/Home/bin/{java_executable}"),
+        ]
         if len(candidates) != 1:
             raise RuntimeError(f"Could not identify JDK root in {archive.name}")
         extracted = candidates[0].parent.parent

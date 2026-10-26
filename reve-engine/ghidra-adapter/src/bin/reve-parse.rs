@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 
 fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), Box<dyn Error>> {
     let input = parse_input_argument(arguments)?;
-    let config = GhidraConfig::from_environment()?;
+    let config = GhidraConfig::from_environment();
     let program = GhidraAdapter::new(config).analyze(input)?;
     write_summary(&program, &mut io::stdout())?;
     Ok(())
@@ -100,10 +100,7 @@ enum CliError {
 impl std::fmt::Display for CliError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Usage => write!(
-                formatter,
-                "usage: reve-parse <path-to-elf> (set GHIDRA_HEADLESS first)"
-            ),
+            Self::Usage => write!(formatter, "usage: reve-parse <path-to-elf>"),
         }
     }
 }

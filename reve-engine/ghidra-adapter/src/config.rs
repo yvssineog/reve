@@ -6,6 +6,11 @@ use std::{env, error::Error, fmt, path::PathBuf, time::Duration};
 pub const GHIDRA_HEADLESS_ENV: &str = "GHIDRA_HEADLESS";
 pub const GHIDRA_PROJECTS_ENV: &str = "REVE_GHIDRA_PROJECTS";
 const BUNDLED_JDK_RELATIVE_PATH: &str = "../../.tools/java/temurin-25";
+const BUNDLED_HEADLESS_RELATIVE_PATH: &str = if cfg!(windows) {
+    "../../.tools/ghidra/ghidra_12.2_PUBLIC/support/analyzeHeadless.bat"
+} else {
+    "../../.tools/ghidra/ghidra_12.2_PUBLIC/support/analyzeHeadless"
+};
 
 /// Paths and execution limits needed by the Ghidra adapter.
 #[derive(Clone, Debug)]
@@ -27,7 +32,7 @@ impl GhidraConfig {
     pub fn new(analyze_headless: impl Into<PathBuf>, projects_dir: impl Into<PathBuf>) -> Self {
         Self {
             analyze_headless: analyze_headless.into(),
-            java_home: bundled_jdk_home(),
+            java_home: bundled(BUNDLED_JDK_RELATIVE_PATH),
             projects_dir: projects_dir.into(),
             timeout: Duration::from_secs(10 * 60),
         }
@@ -47,16 +52,20 @@ impl GhidraConfig {
 
     /// Read paths from the environment.
     ///
-    /// `GHIDRA_HEADLESS` is required. `REVE_GHIDRA_PROJECTS` defaults to
+    /// `GHIDRA_HEADLESS` defaults to the project-local launcher under
+    /// `.tools/ghidra/` when unset or empty. `REVE_GHIDRA_PROJECTS` defaults to
     /// `ghidra-projects` relative to the current working directory.
-    pub fn from_environment() -> Result<Self, ConfigError> {
-        let analyze_headless = env_path(GHIDRA_HEADLESS_ENV)?;
+    pub fn from_environment() -> Self {
+        let analyze_headless = match env::var_os(GHIDRA_HEADLESS_ENV) {
+            Some(path) if !path.is_empty() => PathBuf::from(path),
+            _ => bundled(BUNDLED_HEADLESS_RELATIVE_PATH),
+        };
         let projects_dir = match env::var_os(GHIDRA_PROJECTS_ENV) {
             Some(path) => PathBuf::from(path),
             None => PathBuf::from("ghidra-projects"),
         };
 
-        Ok(Self::new(analyze_headless, projects_dir))
+        Self::new(analyze_headless, projects_dir)
     }
 
     /// Check the configured paths and timeout before starting an analysis.
@@ -95,18 +104,9 @@ impl GhidraConfig {
     }
 }
 
-fn env_path(name: &'static str) -> Result<PathBuf, ConfigError> {
-    match env::var_os(name) {
-        Some(value) if !value.is_empty() => Ok(PathBuf::from(value)),
-        Some(_) | None => Err(ConfigError::MissingEnvironmentVariable(name)),
-    }
-}
-
 /// Invalid or incomplete Ghidra adapter configuration.
 #[derive(Debug)]
 pub enum ConfigError {
-    /// A required environment variable was not set or was empty.
-    MissingEnvironmentVariable(&'static str),
     /// The configured launcher path does not exist or cannot be inspected.
     HeadlessNotFound(PathBuf),
     /// The configured launcher exists but is not a regular file.
@@ -124,12 +124,6 @@ pub enum ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingEnvironmentVariable(name) => {
-                write!(
-                    formatter,
-                    "required environment variable {name} is missing or empty"
-                )
-            }
             Self::HeadlessNotFound(path) => write!(
                 formatter,
                 "Ghidra Headless launcher does not exist or cannot be accessed: {}",
@@ -159,8 +153,9 @@ impl fmt::Display for ConfigError {
     }
 }
 
-fn bundled_jdk_home() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_JDK_RELATIVE_PATH);
+/// Resolve a project-local tool path relative to this crate's source directory.
+fn bundled(relative: &str) -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative);
     path.canonicalize().unwrap_or(path)
 }
 

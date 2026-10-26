@@ -127,23 +127,20 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8
     reader
         .join()
         .map_err(|_| {
-            ParserError::ProcessOutput(io::Error::new(
-                io::ErrorKind::Other,
-                "Ghidra output reader thread panicked",
-            ))
+            ParserError::ProcessOutput(io::Error::other("Ghidra output reader thread panicked"))
         })?
         .map_err(ParserError::ProcessOutput)
 }
 
 #[cfg(not(windows))]
-fn make_command<'a>(launcher: &Path, args: &[&'a OsStr]) -> Command {
+fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     let mut command = Command::new(launcher);
     command.args(args);
     command
 }
 
 #[cfg(windows)]
-fn make_command<'a>(launcher: &Path, args: &[&'a OsStr]) -> Command {
+fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     use std::os::windows::process::CommandExt;
 
     if !matches!(
@@ -186,13 +183,18 @@ fn terminate_process_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
+#[cfg(not(windows))]
+fn terminate_process_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn command_uses_the_configured_jdk_and_puts_it_first_on_path() {
-        let java_home = Path::new("C:/reve/.tools/java/temurin-25");
+        let java_home = Path::new("/reve/.tools/java/temurin-25");
         let mut command = Command::new("placeholder");
 
         configure_java_environment(&mut command, java_home).unwrap();
@@ -211,9 +213,4 @@ mod tests {
             .unwrap();
         assert_eq!(path.first(), Some(&java_home.join("bin")));
     }
-}
-
-#[cfg(not(windows))]
-fn terminate_process_tree(child: &mut std::process::Child) {
-    let _ = child.kill();
 }

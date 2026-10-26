@@ -1,22 +1,26 @@
 mod empty;
 mod header;
-mod mock;
 mod palette;
 mod panes;
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tree::{TreeState, tree};
-use gpui_kit::component::{ActiveTheme as _, Theme, TitleBar, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, Theme, TitleBar, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
+use reve_model::Program;
 
 use palette::Palette;
-use panes::decompile::Decompile;
 use panes::listing::Listing;
-use panes::{pane, project, symbols};
+use panes::{not_ready, pane, project, symbols};
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
 // plus the panel toggle glyphs.
@@ -91,9 +95,22 @@ struct Reve {
 struct Workspace {
     name: SharedString,
     project: Entity<TreeState>,
-    symbols: Entity<TreeState>,
-    listing: Entity<Listing>,
-    decompile: Entity<Decompile>,
+    // The project tree's ELF files, by id.
+    elf_files: Rc<HashSet<SharedString>>,
+    analysis: Analysis,
+}
+
+// Where Ghidra is with the folder's binary.
+enum Analysis {
+    // The binary's file name.
+    Analyzing(SharedString),
+    Done {
+        summary: SharedString,
+        symbols: Entity<TreeState>,
+        listing: Entity<Listing>,
+    },
+    // Why, in one line.
+    Failed(SharedString),
 }
 
 impl Reve {
@@ -109,7 +126,8 @@ impl Reve {
         }
     }
 
-    // Asks the system's folder picker for a folder; cancelling leaves the empty screen.
+    // Asks the system's folder picker for a folder; cancelling leaves the empty screen, which
+    // also stays up while the folder is scanned.
     fn open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -122,30 +140,117 @@ impl Reve {
             let Ok(Ok(Some(paths))) = picked.await else {
                 return;
             };
-            let Some(folder) = paths.first() else { return };
-            this.update_in(cx, |this, window, cx| this.open(folder, window, cx))
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let scan = cx.background_spawn({
+                let folder = folder.clone();
+                async move { project::scan(&folder) }
+            });
+            let files = scan.await;
+            this.update_in(cx, |this, window, cx| this.open(&folder, files, window, cx))
                 .ok();
         })
         .detach();
     }
 
-    // Shows `folder` with the listing focused, so its keys work without a click first.
-    // TODO: the panes still show the mock program; the Ghidra adapter should analyze the folder's binaries.
-    fn open(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let program = mock::program();
-        let symbols = cx.new(|cx| symbols::state(&program, cx));
-        let listing = cx.new(|cx| Listing::new(mock::stress(program), cx));
-        let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
-        window.focus(&listing.focus_handle(cx), cx);
+    // Shows `folder` and starts analyzing its binary.
+    fn open(
+        &mut self,
+        folder: &Path,
+        files: Vec<project::File>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A second pick made while the first folder was scanning loses; one workspace, one analysis.
+        if self.workspace.is_some() {
+            return;
+        }
+        let target = project::target(&files);
+        let analysis = match target {
+            None => Analysis::Failed("No ELF binary in this folder".into()),
+            Some(target) => {
+                let name = SharedString::from(target.path.rsplit('/').next().unwrap().to_owned());
+                Self::analyze(folder.join(&target.path), name.clone(), window, cx);
+                Analysis::Analyzing(name)
+            }
+        };
         // The root has no file name; it shows as `/`.
         let name = folder.file_name().unwrap_or(folder.as_os_str());
         self.workspace = Some(Workspace {
             name: name.to_string_lossy().into_owned().into(),
-            project: cx.new(project::state),
-            symbols,
-            listing,
-            decompile,
+            project: cx.new(|cx| project::state(&files, target, cx)),
+            elf_files: Rc::new(
+                files
+                    .iter()
+                    .filter(|file| file.elf)
+                    .map(|file| file.path.clone().into())
+                    .collect(),
+            ),
+            analysis,
         });
+        cx.notify();
+    }
+
+    // Runs Ghidra on `binary` off the main thread, then shows the result.
+    fn analyze(binary: PathBuf, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        let analysis = cx.background_spawn(async move {
+            GhidraAdapter::new(GhidraConfig::from_environment()).analyze(binary)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = analysis.await;
+            this.update_in(cx, |this, window, cx| {
+                this.analyzed(name, result, window, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // Fills the Symbol Tree and Listing, or says why not. The listing takes focus unless the
+    // user has already put it in a pane.
+    fn analyzed(
+        &mut self,
+        name: SharedString,
+        result: Result<Program, ParserError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = &mut self.workspace else {
+            return;
+        };
+        workspace.analysis = match result {
+            Err(error) => {
+                eprintln!("analyzing {name}: {error}");
+                Analysis::Failed(match error {
+                    ParserError::GhidraFailed { status, .. } => {
+                        format!("Ghidra failed ({status})").into()
+                    }
+                    error => error.to_string().into(),
+                })
+            }
+            // The listing needs an instruction to put its cursor on.
+            Ok(program) if program.functions.iter().all(|f| f.instructions.is_empty()) => {
+                Analysis::Failed(format!("Ghidra found no code in {name}").into())
+            }
+            Ok(program) => {
+                let summary = format!(
+                    "{name} · {} · {} functions",
+                    program.architecture,
+                    program.functions.len()
+                );
+                let symbols = cx.new(|cx| symbols::state(&program, cx));
+                let listing = cx.new(|cx| Listing::new(program, cx));
+                if self.focus.is_focused(window) {
+                    window.focus(&listing.focus_handle(cx), cx);
+                }
+                Analysis::Done {
+                    summary: summary.into(),
+                    symbols,
+                    listing,
+                }
+            }
+        };
         cx.notify();
     }
 }
@@ -162,6 +267,28 @@ impl Render for Reve {
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
+        let elf_files = workspace.elf_files.clone();
+        let (symbols, listing) = match &workspace.analysis {
+            Analysis::Done {
+                symbols, listing, ..
+            } => (
+                tree(symbols, symbols::row)
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(6.))
+                    .into_any_element(),
+                listing.clone().into_any_element(),
+            ),
+            _ => (
+                not_ready(cx).into_any_element(),
+                not_ready(cx).into_any_element(),
+            ),
+        };
+        let (busy, status) = match &workspace.analysis {
+            Analysis::Analyzing(name) => (true, format!("Analyzing {name}…").into()),
+            Analysis::Done { summary, .. } => (false, summary.clone()),
+            Analysis::Failed(why) => (false, why.clone()),
+        };
 
         // Project above Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
         let sidebar = resizable_panel()
@@ -181,19 +308,17 @@ impl Render for Reve {
                         )
                         .child(
                             // Inset so the selected row's rounded fill clears the pane edges.
-                            tree(&workspace.project, project::row)
-                                .flex_1()
-                                .min_h_0()
-                                .px(px(6.)),
+                            tree(&workspace.project, move |ix, entry, _, _, cx| {
+                                project::row(&elf_files, ix, entry, cx)
+                            })
+                            .flex_1()
+                            .min_h_0()
+                            .px(px(6.)),
                         ),
                     )
                     .child(
-                        pane(theme, "tree-structure", palette.symbol, "Symbol Tree", None).child(
-                            tree(&workspace.symbols, symbols::row)
-                                .flex_1()
-                                .min_h_0()
-                                .px(px(6.)),
-                        ),
+                        pane(theme, "tree-structure", palette.symbol, "Symbol Tree", None)
+                            .child(symbols),
                     ),
             );
 
@@ -206,17 +331,11 @@ impl Render for Reve {
                         h_resizable("code")
                             .child(
                                 pane(theme, "cpu", palette.mnemonic, "Listing", None)
-                                    .child(workspace.listing.clone()),
+                                    .child(listing),
                             )
                             .child(
-                                pane(
-                                    theme,
-                                    "brackets-curly",
-                                    palette.string,
-                                    "Decompile",
-                                    workspace.decompile.read(cx).name().map(Into::into),
-                                )
-                                .child(workspace.decompile.clone()),
+                                pane(theme, "brackets-curly", palette.string, "Decompile", None)
+                                    .child(not_ready(cx)),
                             ),
                     ),
                 )
@@ -225,7 +344,8 @@ impl Render for Reve {
                         .visible(self.bottom_open)
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
-                        .fixed(),
+                        .fixed()
+                        .child(not_ready(cx)),
                 ),
         );
 
@@ -249,8 +369,21 @@ impl Render for Reve {
                     .min_h_0()
                     .child(h_resizable("body").child(sidebar).child(main)),
             )
-            // Footer: the status line will go here.
-            .child(div().h(px(28.)).border_t_1().border_color(theme.border))
+            // Footer: the analysis status, the one place it shows.
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .px_3()
+                    .gap_2()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .text_color(palette.fg_3)
+                    .when(busy, |footer| {
+                        footer.child(Spinner::new().with_size(px(12.)).color(palette.fg_3))
+                    })
+                    .child(div().min_w_0().truncate().child(status)),
+            )
             .into_any_element()
     }
 }

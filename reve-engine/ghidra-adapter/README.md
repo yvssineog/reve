@@ -87,8 +87,9 @@ export REVE_GHIDRA_PROJECTS="$PWD/ghidra-projects"
 cargo run -p reve-ghidra-adapter --bin reve-parse -- /path/to/input.elf
 ```
 
-`GHIDRA_HEADLESS` is required. `REVE_GHIDRA_PROJECTS` is optional and defaults
-to `ghidra-projects` in the current directory. Each run writes its temporary
+`GHIDRA_HEADLESS` is optional and defaults to the project-local launcher under
+`.tools/ghidra/`. `REVE_GHIDRA_PROJECTS` is optional and defaults to
+`ghidra-projects` in the current directory. Each run writes its temporary
 Ghidra project and protobuf export in a unique job directory, then removes
 that directory when parsing finishes.
 

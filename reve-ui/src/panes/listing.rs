@@ -10,19 +10,19 @@ use reve_model::{Address, Function, Instruction, Program};
 
 use crate::palette::Palette;
 
-// The key context both code panes, listing and decompiler, bind their shortcuts under.
-pub const CONTEXT: &str = "Code";
+// The key context the listing binds its shortcuts under.
+const CONTEXT: &str = "Code";
 // Instructions a page key moves the cursor.
-pub const PAGE: isize = 24;
+const PAGE: isize = 24;
 // The height of every row.
-pub const ROW: Pixels = px(18.);
+const ROW: Pixels = px(18.);
 // Column widths, in 12px monospace characters: address 10, bytes 13, mnemonic 7,
 // operands 30. Labels start on the mnemonic column.
 const ADDRESS: Pixels = px(72.);
 const BYTES: Pixels = px(94.);
 const MNEMONIC: Pixels = px(51.);
 const OPERANDS: Pixels = px(217.);
-pub const GUTTER: Pixels = px(12.);
+const GUTTER: Pixels = px(12.);
 
 actions!(listing, [HalfPageDown, HalfPageUp]);
 
@@ -64,18 +64,9 @@ fn callee<'a>(program: &'a Program, instruction: &Instruction) -> Option<&'a Fun
 }
 
 // The address an operand names, in Ghidra's `0x` form.
-pub fn target(operands: &str) -> Option<Address> {
+fn target(operands: &str) -> Option<Address> {
     let hex = operands.strip_prefix("0x")?;
     u64::from_str_radix(hex, 16).ok().map(Address)
-}
-
-// Where the cursor is, as the decompiler reads it.
-pub struct Spot<'a> {
-    pub address: Address,
-    pub function: &'a str,
-    // The cursor is on the function's entry.
-    pub entry: bool,
-    pub call: Option<&'a str>,
 }
 
 // The program's disassembly, with a cursor on one instruction.
@@ -129,13 +120,13 @@ impl Listing {
     }
 
     // Moves the cursor `by` instructions, scrolling no more than needed.
-    pub fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
         self.jump(self.moved(by), ScrollStrategy::Nearest, cx);
     }
 
     // Vim's ctrl-d and ctrl-u: the view and the cursor move half a screen together, so the
     // cursor keeps its place on screen.
-    pub fn half_page(&mut self, direction: isize, cx: &mut Context<Self>) {
+    fn half_page(&mut self, direction: isize, cx: &mut Context<Self>) {
         let view = self.scroll.0.borrow().base_handle.clone();
         let half = (view.bounds().size.height / ROW / 2.).max(1.) as isize;
         let to = self.moved(direction * half);
@@ -146,44 +137,20 @@ impl Listing {
     }
 
     // Follows the call under the cursor to the function's entry.
-    pub fn follow(&mut self, cx: &mut Context<Self>) {
-        let (_, instruction) = self.under_cursor();
-        if let Some(function) = callee(&self.program, instruction)
+    fn follow(&mut self, cx: &mut Context<Self>) {
+        if let Some(function) = callee(&self.program, self.under_cursor())
             && let Some(ix) = row_at(&self.instructions, function.entry)
         {
             self.jump(ix, ScrollStrategy::Center, cx);
         }
     }
 
-    pub fn spot(&self) -> Spot<'_> {
-        let (function, instruction) = self.under_cursor();
-        spot(&self.program, function, instruction)
-    }
-
-    // Puts the cursor on the first instruction in its function that calls `name`.
-    pub fn pick_call(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
-        let (function, _) = self.under_cursor();
-        let Some(ix) = function
-            .instructions
-            .iter()
-            .find(|instruction| {
-                callee(&self.program, instruction).is_some_and(|callee| callee.name == name)
-            })
-            .and_then(|instruction| row_at(&self.instructions, instruction.address))
-        else {
-            return false;
-        };
-        self.jump(ix, ScrollStrategy::Nearest, cx);
-        true
-    }
-
-    // The instruction under the cursor, and its function.
-    fn under_cursor(&self) -> (&Function, &Instruction) {
+    // The instruction under the cursor.
+    fn under_cursor(&self) -> &Instruction {
         let Row::Code(function, instruction) = self.rows[self.cursor] else {
             unreachable!("the cursor is always on an instruction");
         };
-        let function = &self.program.functions[function];
-        (function, &function.instructions[instruction])
+        &self.program.functions[function].instructions[instruction]
     }
 
     // Row `ix`, inset by the gutter, which will hold bookmarks.
@@ -372,20 +339,6 @@ fn row_at(instructions: &[(Address, usize)], address: Address) -> Option<usize> 
     Some(instructions[at].1)
 }
 
-// Where `instruction` sits in `function`.
-pub(super) fn spot<'a>(
-    program: &'a Program,
-    function: &'a Function,
-    instruction: &'a Instruction,
-) -> Spot<'a> {
-    Spot {
-        address: instruction.address,
-        function: &function.name,
-        entry: instruction.address == function.entry,
-        call: callee(program, instruction).map(|callee| callee.name.as_str()),
-    }
-}
-
 // A header row's text, started on the mnemonic column and cut with an ellipsis.
 fn header(row: Div) -> Div {
     row.pl(GUTTER + ADDRESS + BYTES).truncate()
@@ -403,45 +356,65 @@ fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use reve_model::Address;
+    use reve_model::{Address, Function, Instruction, Program};
 
-    use super::{callee, index, layout, target, xrefs};
-    use crate::mock;
+    use super::{callee, xrefs};
 
-    #[test]
-    fn calls_land_on_instructions() {
-        let program = mock::stress(mock::program());
-        let rows = layout(&program);
-        let instructions = index(&program, &rows);
-        assert!(rows.len() > 1_000_000);
-        assert!(
-            instructions.windows(2).all(|pair| pair[0].0 < pair[1].0),
-            "addresses rise row by row"
-        );
-        for function in &program.functions {
-            for instruction in &function.instructions {
-                if instruction.mnemonic == "bl" && target(&instruction.operands).is_some() {
-                    assert!(
-                        callee(&program, instruction).is_some(),
-                        "{} at {:08x}",
-                        instruction.operands,
-                        instruction.address.0
-                    );
-                }
-            }
+    fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
+        let instructions: Vec<_> = (0..)
+            .zip(code)
+            .map(|(ix, &(mnemonic, operands))| Instruction {
+                address: Address(entry + 4 * ix),
+                size: 4,
+                mnemonic: mnemonic.into(),
+                operands: operands.into(),
+                bytes: vec![0; 4],
+            })
+            .collect();
+        Function {
+            name: name.into(),
+            entry: Address(entry),
+            size: 4 * instructions.len() as u64,
+            instructions,
+        }
+    }
+
+    fn program() -> Program {
+        Program {
+            name: "demo".into(),
+            format: "ELF".into(),
+            architecture: "AARCH64:LE:64:v8A".into(),
+            address_size_bits: 64,
+            functions: vec![
+                function(
+                    "main",
+                    0x1000,
+                    &[("bl", "0x1010"), ("bl", "0x1010"), ("ret", "")],
+                ),
+                function("helper", 0x1010, &[("mov", "x0, #0x1"), ("bl", "0x2000")]),
+                function("leaf", 0x1020, &[("ret", "")]),
+            ],
         }
     }
 
     #[test]
+    fn calls_resolve_to_function_entries() {
+        let program = program();
+        let name = |f: usize, i: usize| {
+            callee(&program, &program.functions[f].instructions[i]).map(|f| f.name.as_str())
+        };
+        assert_eq!(name(0, 0), Some("helper"));
+        assert_eq!(name(1, 0), None, "operands that aren't one address");
+        assert_eq!(name(1, 1), None, "an address no function starts at");
+    }
+
+    #[test]
     fn xrefs_name_callers() {
-        let xrefs = xrefs(&mock::program());
+        let xrefs = xrefs(&program());
         assert_eq!(
-            &*xrefs[&Address(0x00413480)],
-            "XREF[3]: handle_client:00411f50(c), parse_request:00412a68(c), serve_file:00414444(c)"
+            &*xrefs[&Address(0x1010)],
+            "XREF[2]: main:00001000(c), main:00001004(c)"
         );
-        assert!(
-            !xrefs.contains_key(&Address(0x00410c40)),
-            "nothing calls main"
-        );
+        assert_eq!(xrefs.len(), 1, "nothing calls main or leaf");
     }
 }

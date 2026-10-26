@@ -1,4 +1,3 @@
-pub mod decompile;
 pub mod listing;
 pub mod project;
 pub mod symbols;
@@ -8,6 +7,8 @@ use gpui_kit::component::resizable::{ResizablePanel, resizable_panel};
 use gpui_kit::component::tree::TreeEntry;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, h_flex};
 use gpui_kit::*;
+
+use crate::palette::Palette;
 
 // A pane: a header row (Phosphor duotone icon in the pane's hue + title + optional detail)
 // over the caller's body.
@@ -44,6 +45,17 @@ pub fn pane(
                     .child(detail)
             })),
     )
+}
+
+// The body of a pane with nothing to show yet: one quiet line at the header's size.
+pub fn not_ready(cx: &App) -> Div {
+    h_flex()
+        .flex_1()
+        .min_h_0()
+        .justify_center()
+        .text_xs()
+        .text_color(Palette::of(cx).fg_3)
+        .child("Not ready.")
 }
 
 // A compact tree row: indent, caret, icon in its hue, the label, then an optional detail on

@@ -28,7 +28,7 @@ The bundled JDK is under `.tools/java/temurin-25/`. The parser can use these pat
 
 ## Run the UI
 
-Run `cargo run -p reve-ui` to start the GPUI application.
+Run `cargo run -p reve-ui` to start the GPUI application. Opening a folder analyzes its first ELF binary with the bundled Ghidra, so run `scripts/setup_tools.py` and `scripts/build_ghidra_extension.py` first.
 
 ## TODO
 
@@ -40,4 +40,4 @@ Run `cargo run -p reve-ui` to start the GPUI application.
 - Calls to imported functions
 - End-of-line comments and the strings instructions load
 - The program's start address
-- Decompiled C, still mocked in `reve-ui/src/mock.rs`
+- Decompiled C (the Decompile pane shows Not ready.)
