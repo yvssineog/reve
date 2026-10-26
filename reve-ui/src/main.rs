@@ -209,7 +209,7 @@ fn main() {
 
         // Quit from the shortcut or the app menu.
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.set_menus([Menu::new("Rêve").items([MenuItem::action("Quit Rêve", Quit)])]);
+        cx.set_menus([Menu::new("rêve").items([MenuItem::action("Quit rêve", Quit)])]);
 
         // Flips light/dark. On macOS this also re-themes the native parts, like the
         // traffic lights and menus, and stops following the system until relaunch.
@@ -245,7 +245,7 @@ fn main() {
         };
         gpui_kit::open_window(options, cx, |window, cx| {
             // Name shown in Mission Control and the Window menu.
-            window.set_window_title("Rêve");
+            window.set_window_title("rêve");
 
             // Switch light/dark live when the system setting changes.
             window
