@@ -103,6 +103,10 @@ pub(crate) fn run_headless(
 }
 
 fn configure_java_environment(command: &mut Command, java_home: &Path) -> Result<(), ParserError> {
+    // `canonicalize` returns Windows verbatim paths (`\\?\C:\...`). Ghidra's
+    // batch launchers do not handle those reliably, so pass normal DOS paths
+    // across the process boundary.
+    let java_home = std::path::PathBuf::from(child_path_arg(java_home.as_os_str()));
     let java_bin = java_home.join("bin");
     let existing_path = env::var_os("PATH").unwrap_or_default();
     let path = env::join_paths(std::iter::once(java_bin).chain(env::split_paths(&existing_path)))
@@ -154,11 +158,12 @@ fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
 
     // Windows batch launchers must be run through cmd.exe. /S /C strips only
     // the outer quotes; the embedded quotes preserve spaces in each argument.
-    let mut command_line = format!("\"\"{}\"", launcher.display());
+    let launcher = child_path_arg(launcher.as_os_str());
+    let mut command_line = format!("\"\"{}\"", launcher.to_string_lossy());
     for argument in args {
         command_line.push(' ');
         command_line.push('"');
-        command_line.push_str(&argument.to_string_lossy());
+        command_line.push_str(&child_path_arg(argument).to_string_lossy());
         command_line.push('"');
     }
     command_line.push('"');
@@ -168,6 +173,30 @@ fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     command.args(["/D", "/S", "/C"]);
     command.raw_arg(format!(" {command_line}"));
     command
+}
+
+#[cfg(windows)]
+fn child_path_arg(value: &OsStr) -> std::ffi::OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    const EXTENDED_PREFIX: &[u16] = &[92, 92, 63, 92];
+    const EXTENDED_UNC_PREFIX: &[u16] = &[92, 92, 63, 92, 85, 78, 67, 92];
+    let value = value.encode_wide().collect::<Vec<_>>();
+
+    if value.starts_with(EXTENDED_UNC_PREFIX) {
+        let mut normal_path = vec![92, 92];
+        normal_path.extend_from_slice(&value[EXTENDED_UNC_PREFIX.len()..]);
+        std::ffi::OsString::from_wide(&normal_path)
+    } else if value.starts_with(EXTENDED_PREFIX) && value.get(5) == Some(&(b':' as u16)) {
+        std::ffi::OsString::from_wide(&value[EXTENDED_PREFIX.len()..])
+    } else {
+        std::ffi::OsString::from_wide(&value)
+    }
+}
+
+#[cfg(not(windows))]
+fn child_path_arg(value: &OsStr) -> std::ffi::OsString {
+    value.to_os_string()
 }
 
 #[cfg(windows)]
@@ -212,5 +241,22 @@ mod tests {
             .map(|(_, value)| env::split_paths(value).collect::<Vec<_>>())
             .unwrap();
         assert_eq!(path.first(), Some(&java_home.join("bin")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_child_paths_drop_extended_length_prefixes() {
+        assert_eq!(
+            child_path_arg(OsStr::new(r"\\?\D:\reve\.tools\ghidra")),
+            OsStr::new(r"D:\reve\.tools\ghidra")
+        );
+        assert_eq!(
+            child_path_arg(OsStr::new(r"\\?\UNC\server\share\reve")),
+            OsStr::new(r"\\server\share\reve")
+        );
+        assert_eq!(
+            child_path_arg(OsStr::new(r"D:\reve\.tools\ghidra")),
+            OsStr::new(r"D:\reve\.tools\ghidra")
+        );
     }
 }
