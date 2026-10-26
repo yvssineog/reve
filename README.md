@@ -6,3 +6,5 @@ Open-source reverse engineering application.
 - `reve-ui/`: GPUI application.
 
 Initial target: Linux ELF x86-64. Windows PE support may follow.
+
+use `cargo run` to run the gpui-kit application.

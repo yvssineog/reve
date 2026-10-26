@@ -1,0 +1,3 @@
+[workspace]
+members = ["reve-ui"]
+resolver = "3"
