@@ -43,8 +43,8 @@ const ICONS: &[(&str, &[u8])] = icons![
     "brackets-curly-duotone",
     "function-duotone",
     "sign-in-duotone",
-    "sun",
-    "moon",
+    "sun-duotone",
+    "moon-duotone",
     "panel-open",
     "panel-closed"
 ];

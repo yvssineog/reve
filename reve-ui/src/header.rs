@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Placement, Sizable as _, TitleBar, h_flex,
+    ActiveTheme as _, Disableable as _, Icon, Placement, Sizable as _, TitleBar, h_flex, oklch,
 };
 use gpui_kit::*;
 
@@ -38,8 +38,14 @@ pub fn header(
         },
         ToggleBottom,
     );
+    // A yellow moon in the dark, a purple sun in the light.
+    let (glyph, hue) = if dark {
+        ("moon-duotone", oklch(0.86, 0.15, 88.))
+    } else {
+        ("sun-duotone", oklch(0.56, 0.17, 298.4))
+    };
     let appearance = command(
-        tool("appearance", icon(if dark { "moon" } else { "sun" }), cx),
+        tool("appearance", icon(glyph).text_color(hue), cx),
         if dark {
             "Switch to light mode"
         } else {
