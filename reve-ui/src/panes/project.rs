@@ -15,8 +15,7 @@ enum Kind {
     Text,
 }
 
-// Mock project: its name and the flat file table the engine will produce.
-pub const NAME: &str = "Halo AX3000 1.4.2";
+// Mock project: the flat file table the engine will produce.
 const ANALYZED: &str = "_firmware.bin.extracted/squashfs-root/usr/sbin/httpd";
 #[rustfmt::skip]
 const FILES: &[(&str, Kind)] = &[

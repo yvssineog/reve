@@ -1,9 +1,11 @@
+mod empty;
 mod header;
 mod mock;
 mod palette;
 mod panes;
 
 use std::borrow::Cow;
+use std::path::Path;
 
 use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
@@ -64,14 +66,30 @@ impl AssetSource for AppAssets {
 }
 
 // Commands that keyboard shortcuts, buttons and menus can trigger.
-actions!(reve, [Quit, ToggleSidebar, ToggleBottom, ToggleAppearance]);
+actions!(
+    reve,
+    [
+        Quit,
+        OpenFolder,
+        ToggleSidebar,
+        ToggleBottom,
+        ToggleAppearance
+    ]
+);
 
-// The main view: header, body, footer stacked top to bottom.
+// The main view: the empty screen until a folder is open, then header, body, footer
+// stacked top to bottom.
 struct Reve {
     // Takes the app's shortcuts when no pane holds focus.
     focus: FocusHandle,
     sidebar_open: bool,
     bottom_open: bool,
+    workspace: Option<Workspace>,
+}
+
+// An open folder and the panes showing it.
+struct Workspace {
+    name: SharedString,
     project: Entity<TreeState>,
     symbols: Entity<TreeState>,
     listing: Entity<Listing>,
@@ -79,27 +97,68 @@ struct Reve {
 }
 
 impl Reve {
-    // Opens with the listing focused, so its keys work without a click first.
+    // Opens on the empty screen, focused so its I key works without a click first.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        Self {
+            focus,
+            sidebar_open: true,
+            bottom_open: true,
+            workspace: None,
+        }
+    }
+
+    // Asks the system's folder picker for a folder; cancelling leaves the empty screen.
+    fn open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            // ponytail: a picker that fails to open (Linux without a portal) is ignored like a cancel.
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(folder) = paths.first() else { return };
+            this.update_in(cx, |this, window, cx| this.open(folder, window, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    // Shows `folder` with the listing focused, so its keys work without a click first.
+    // TODO: the panes still show the mock program; the Ghidra adapter should analyze the folder's binaries.
+    fn open(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let program = mock::program();
         let symbols = cx.new(|cx| symbols::state(&program, cx));
         let listing = cx.new(|cx| Listing::new(mock::stress(program), cx));
         let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
         window.focus(&listing.focus_handle(cx), cx);
-        Self {
-            focus: cx.focus_handle(),
-            sidebar_open: true,
-            bottom_open: true,
+        // The root has no file name; it shows as `/`.
+        let name = folder.file_name().unwrap_or(folder.as_os_str());
+        self.workspace = Some(Workspace {
+            name: name.to_string_lossy().into_owned().into(),
             project: cx.new(project::state),
             symbols,
             listing,
             decompile,
-        }
+        });
+        cx.notify();
     }
 }
 
 impl Render for Reve {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(workspace) = &self.workspace else {
+            return empty::screen(cx)
+                .track_focus(&self.focus)
+                .key_context(empty::CONTEXT)
+                .on_action(cx.listener(Self::open_folder))
+                .into_any_element();
+        };
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
@@ -118,11 +177,11 @@ impl Render for Reve {
                             "folder-simple",
                             palette.number,
                             "Project",
-                            Some(project::NAME),
+                            Some(workspace.name.clone()),
                         )
                         .child(
                             // Inset so the selected row's rounded fill clears the pane edges.
-                            tree(&self.project, project::row)
+                            tree(&workspace.project, project::row)
                                 .flex_1()
                                 .min_h_0()
                                 .px(px(6.)),
@@ -130,7 +189,7 @@ impl Render for Reve {
                     )
                     .child(
                         pane(theme, "tree-structure", palette.symbol, "Symbol Tree", None).child(
-                            tree(&self.symbols, symbols::row)
+                            tree(&workspace.symbols, symbols::row)
                                 .flex_1()
                                 .min_h_0()
                                 .px(px(6.)),
@@ -147,7 +206,7 @@ impl Render for Reve {
                         h_resizable("code")
                             .child(
                                 pane(theme, "cpu", palette.mnemonic, "Listing", None)
-                                    .child(self.listing.clone()),
+                                    .child(workspace.listing.clone()),
                             )
                             .child(
                                 pane(
@@ -155,9 +214,9 @@ impl Render for Reve {
                                     "brackets-curly",
                                     palette.string,
                                     "Decompile",
-                                    self.decompile.read(cx).name(),
+                                    workspace.decompile.read(cx).name().map(Into::into),
                                 )
-                                .child(self.decompile.clone()),
+                                .child(workspace.decompile.clone()),
                             ),
                     ),
                 )
@@ -192,6 +251,7 @@ impl Render for Reve {
             )
             // Footer: the status line will go here.
             .child(div().h(px(28.)).border_t_1().border_color(theme.border))
+            .into_any_element()
     }
 }
 
@@ -214,6 +274,7 @@ fn main() {
             key("secondary-q", Quit, cx),
             key("secondary-b", ToggleSidebar, cx),
             key("secondary-j", ToggleBottom, cx),
+            KeyBinding::new("i", OpenFolder, Some(empty::CONTEXT)),
         ];
         cx.bind_keys(keys);
 

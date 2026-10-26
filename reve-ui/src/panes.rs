@@ -16,7 +16,7 @@ pub fn pane(
     icon: &str,
     hue: Hsla,
     title: &'static str,
-    detail: Option<&'static str>,
+    detail: Option<SharedString>,
 ) -> ResizablePanel {
     resizable_panel().flex_col().child(
         h_flex()

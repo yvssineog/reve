@@ -136,20 +136,23 @@ fn go_to(window: &Window, cx: &App) -> Button {
                 .text_size(px(12.5))
                 .child(icon("magnifying-glass-bold").with_size(px(14.)))
                 .child("Go to address or symbol")
-                .child(
-                    h_flex()
-                        .ml_auto()
-                        .h(px(18.))
-                        .min_w(px(18.))
-                        .px_1()
-                        .justify_center()
-                        .rounded(px(5.))
-                        .bg(ink.opacity(0.08))
-                        .text_size(px(11.))
-                        .text_color(ink.opacity(0.64))
-                        .child("G"),
-                ),
+                .child(key_badge("G", cx).ml_auto()),
         )
+}
+
+// The badge naming a control's one-key shortcut.
+pub fn key_badge(key: &'static str, cx: &App) -> Div {
+    let ink = cx.theme().foreground;
+    h_flex()
+        .h(px(18.))
+        .min_w(px(18.))
+        .px_1()
+        .justify_center()
+        .rounded(px(5.))
+        .bg(ink.opacity(0.08))
+        .text_size(px(11.))
+        .text_color(ink.opacity(0.64))
+        .child(key)
 }
 
 // A group of header controls. It keeps mouse presses to itself, so clicking

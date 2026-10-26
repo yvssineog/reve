@@ -29,3 +29,15 @@ The bundled JDK is under `.tools/java/temurin-25/`. The parser can use these pat
 ## Run the UI
 
 Run `cargo run -p reve-ui` to start the GPUI application.
+
+## TODO
+
+`reve-model` doesn't carry these yet, so the UI leaves them out:
+
+- Function plate comments and signatures
+- Function namespaces
+- Imports, by library
+- Calls to imported functions
+- End-of-line comments and the strings instructions load
+- The program's start address
+- Decompiled C, still mocked in `reve-ui/src/mock.rs`
