@@ -3,6 +3,7 @@
 Open-source reverse engineering application.
 
 - `reve-engine/model/`: shared engine models.
+- `reve-engine/ghidra-adapter/`: runs headless Ghidra and decodes its export into those models.
 - `reve-ui/`: GPUI application.
 
 Initial target: Linux ELF x86-64. Windows PE support may follow.
@@ -30,14 +31,24 @@ The bundled JDK is under `.tools/java/temurin-25/`. The parser can use these pat
 
 Run `cargo run -p reve-ui` to start the GPUI application. Opening a binary analyzes it with the bundled Ghidra, so run `scripts/bootstrap.py` first.
 
+Press `I` on the empty screen to pick a binary. Once Ghidra finishes, the workspace shows:
+
+- Listing: every function's instructions with address, bytes, mnemonic and operands. Arrows or `j`/`k` step one instruction, page keys a page, `ctrl-d`/`ctrl-u` half a screen, and `enter` follows a call.
+- Decompile: the cursor's function as Ghidra's C, colored by Ghidra's syntax classes. The lines the cursor's instruction became are marked and scrolled into view, and pressing a line moves the cursor to its instruction.
+- Symbol Tree: every function by name. Unnamed `FUN_<address>` ones stay muted.
+- Functions: every function in address order with its address, decompiled signature and size.
+
+Pressing a function in Symbol Tree or Functions takes every pane to it.
+
 ## TODO
 
 `reve-model` doesn't carry these yet, so the UI leaves them out:
 
-- Function plate comments and signatures
+- Function plate comments
 - Function namespaces
 - Imports, by library
 - Calls to imported functions
 - End-of-line comments and the strings instructions load
 - The program's start address
-- Decompiled C (the Decompile pane shows Not ready.)
+
+The Listing doesn't show function signatures yet, though the Functions window does.
