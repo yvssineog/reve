@@ -11,10 +11,10 @@ Initial target: Linux ELF x86-64. Windows PE support may follow.
 
 The parser uses **Ghidra 12.2** and **Eclipse Temurin JDK 25 (64-bit)**. 
 
-From the repository root, run:
+From the repository root, run it with Python 3.9 or newer (macOS's built-in `python3` works):
 
 ```sh
-python scripts/bootstrap.py
+python3 scripts/bootstrap.py
 ```
 
 It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds Ghidra's native decompiler where the release ships none (Apple Silicon) and builds and installs the rêve Ghidra extension. Re-run it after changing `Export.java` or `engine.proto`.

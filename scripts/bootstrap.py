@@ -10,16 +10,12 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-
-if sys.version_info < (3, 12):
-    sys.exit("bootstrap.py needs Python 3.12 or newer")
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / ".tools"
@@ -48,17 +44,21 @@ def fetch(url: str, name: str, sha256: str) -> Path:
         part = path.with_name(name + ".part")
         urllib.request.urlretrieve(url, part, lambda n, size, _: print(f"\r  {n * size >> 20} MiB", end=""))
         print()
+        digest = hashlib.sha256()
         with part.open("rb") as file:
-            if hashlib.file_digest(file, "sha256").hexdigest() != sha256:
-                part.unlink()
-                sys.exit(f"SHA-256 mismatch for {name}")
+            for chunk in iter(lambda: file.read(1 << 20), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != sha256:
+            part.unlink()
+            sys.exit(f"SHA-256 mismatch for {name}")
         part.replace(path)
     return path
 
 
 def unpack(archive: Path, dest: Path) -> None:
     if archive.suffix != ".zip":
-        shutil.unpack_archive(archive, dest, filter="data")
+        # System tar refuses paths that escape dest; tarfile only does from Python 3.12.
+        subprocess.run(["tar", "-xf", archive, "-C", dest], check=True)
         return
     with zipfile.ZipFile(archive) as zipped:
         zipped.extractall(dest)
