@@ -1,5 +1,6 @@
 mod empty;
 mod header;
+mod logo;
 mod palette;
 mod panes;
 
@@ -18,6 +19,7 @@ use gpui_kit::*;
 use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
+use logo::Logo;
 use palette::Palette;
 use panes::decompile::Decompile;
 use panes::functions::Functions;
@@ -40,7 +42,6 @@ const ICONS: &[(&str, &[u8])] = icons![
     "caret-down",
     "magnifying-glass-bold",
     "folder-simple-duotone",
-    "binary-duotone",
     "tree-structure-duotone",
     "cpu-duotone",
     "brackets-curly-duotone",
@@ -89,7 +90,14 @@ struct Reve {
     focus: FocusHandle,
     sidebar_open: bool,
     bottom_open: bool,
-    workspace: Option<Workspace>,
+    screen: Screen,
+}
+
+// The animated logo until a binary is open, then the workspace showing it. Opening one
+// drops the logo, which stops its animation.
+enum Screen {
+    Empty(Entity<Logo>),
+    Open(Workspace),
 }
 
 // An open binary and the panes showing it.
@@ -122,7 +130,7 @@ impl Reve {
             focus,
             sidebar_open: true,
             bottom_open: true,
-            workspace: None,
+            screen: Screen::Empty(cx.new(Logo::new)),
         }
     }
 
@@ -152,12 +160,12 @@ impl Reve {
     // Shows `binary` and starts analyzing it.
     fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // One workspace, one analysis.
-        if self.workspace.is_some() {
+        if let Screen::Open(_) = self.screen {
             return;
         }
         let name = SharedString::from(binary.file_name().unwrap().to_string_lossy().into_owned());
         Self::analyze(binary, name.clone(), window, cx);
-        self.workspace = Some(Workspace {
+        self.screen = Screen::Open(Workspace {
             name,
             analysis: Analysis::Analyzing,
         });
@@ -188,7 +196,7 @@ impl Reve {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = &mut self.workspace else {
+        let Screen::Open(workspace) = &mut self.screen else {
             return;
         };
         workspace.analysis = match result {
@@ -233,12 +241,15 @@ impl Reve {
 
 impl Render for Reve {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(workspace) = &self.workspace else {
-            return empty::screen(cx)
-                .track_focus(&self.focus)
-                .key_context(empty::CONTEXT)
-                .on_action(cx.listener(Self::open_binary))
-                .into_any_element();
+        let workspace = match &self.screen {
+            Screen::Empty(logo) => {
+                return empty::screen(logo.clone(), cx)
+                    .track_focus(&self.focus)
+                    .key_context(empty::CONTEXT)
+                    .on_action(cx.listener(Self::open_binary))
+                    .into_any_element();
+            }
+            Screen::Open(workspace) => workspace,
         };
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
@@ -440,6 +451,9 @@ fn main() {
             cx.new(|cx| Reve::new(window, cx))
         })
         .expect("failed to open window");
+
+        #[cfg(target_os = "macos")]
+        logo::set_dock_icon();
 
         // Bring the app to the front.
         cx.activate(true);

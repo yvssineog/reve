@@ -6,8 +6,16 @@ publish = false
 
 [dependencies]
 gpui-kit = "0.8.1"
+# GPUI already builds these; the logo uses them directly.
+image = { version = "0.25", default-features = false }
+resvg = { version = "0.46", default-features = false }
 reve-ghidra-adapter = { path = "../reve-engine/ghidra-adapter" }
 reve-model = { path = "../reve-engine/model" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData"] }
 
 [[bin]]
 name = "rêve"

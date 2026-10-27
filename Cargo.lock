@@ -5388,6 +5388,11 @@ name = "reve-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "resvg 0.46.0",
  "reve-ghidra-adapter",
  "reve-model",
 ]
