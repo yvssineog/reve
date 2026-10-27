@@ -1,4 +1,4 @@
-// The rêve mark from logo/reve.svg, with the smoke of Paper's GemSmoke shader (the
+// The rêve mark from assets/reve.svg, with the smoke of Paper's GemSmoke shader (the
 // "Songe" study) drifting through its body.
 //
 // GPUI runs no custom shaders, so a background thread computes the smoke into a
@@ -19,7 +19,7 @@ use resvg::tiny_skia::{
 };
 use resvg::usvg::{self, Node, Paint, Tree};
 
-const SVG: &str = include_str!("../../logo/reve.svg");
+const SVG: &str = include_str!("../assets/reve.svg");
 
 // The SVG's 1039-unit canvas, shifted so the box centers on the dragon's optical
 // center: halfway between its bounding-box center (506, 511) and its centroid (558, 524).
@@ -258,10 +258,10 @@ struct Mark {
 
 impl Mark {
     fn new() -> Self {
-        let tree = Tree::from_str(SVG, &usvg::Options::default()).expect("logo/reve.svg parses");
+        let tree = Tree::from_str(SVG, &usvg::Options::default()).expect("assets/reve.svg parses");
         let path = |id| match tree.node_by_id(id) {
             Some(Node::Path(path)) => path,
-            _ => panic!("logo/reve.svg has no #{id} path"),
+            _ => panic!("assets/reve.svg has no #{id} path"),
         };
         let fill = |id| match path(id).fill().map(|fill| fill.paint()) {
             Some(Paint::Color(color)) => Shader::SolidColor(color_of(*color, 1.)),
@@ -281,9 +281,9 @@ impl Mark {
                     SpreadMode::Pad,
                     gradient.transform(),
                 )
-                .expect("logo/reve.svg's gradients have stops")
+                .expect("assets/reve.svg's gradients have stops")
             }
-            _ => panic!("logo/reve.svg's #{id} has no flat or linear fill"),
+            _ => panic!("assets/reve.svg's #{id} has no flat or linear fill"),
         };
         let details = ["horn-sheen", "belly", "highlight"]
             .map(|id| {
@@ -296,7 +296,7 @@ impl Mark {
             Some(Paint::Color(color)) => {
                 [color.red, color.green, color.blue].map(|c| c as f32 / 255.)
             }
-            _ => panic!("logo/reve.svg's #{id} isn't a flat color"),
+            _ => panic!("assets/reve.svg's #{id} isn't a flat color"),
         };
 
         let body = path("body").data().clone();
@@ -592,7 +592,7 @@ pub fn set_dock_icon() {
         VIEW_Y - pad
     );
     let svg = SVG.replacen(r#"viewBox="0 0 1039 1039""#, &view_box, 1);
-    debug_assert_ne!(svg, SVG, "logo/reve.svg keeps its viewBox");
+    debug_assert_ne!(svg, SVG, "assets/reve.svg keeps its viewBox");
     let icon = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(svg.as_bytes()))
         .expect("the icon decodes");
     let app =
