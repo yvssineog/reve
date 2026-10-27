@@ -75,8 +75,8 @@ pub(crate) fn run_headless(
         if started_at.elapsed() >= config.timeout {
             terminate_process_tree(&mut child);
             let _ = child.wait();
-            // On timeout the pipe readers may still be draining a subprocess
-            // that outlived the launcher. Detach them to keep the timeout bound.
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             return Err(ParserError::TimedOut(config.timeout));
         }
 
@@ -138,8 +138,10 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8
 
 #[cfg(not(windows))]
 fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
+    use std::os::unix::process::CommandExt;
+
     let mut command = Command::new(launcher);
-    command.args(args);
+    command.args(args).process_group(0);
     command
 }
 
@@ -214,6 +216,14 @@ fn terminate_process_tree(child: &mut std::process::Child) {
 
 #[cfg(not(windows))]
 fn terminate_process_tree(child: &mut std::process::Child) {
+    // analyzeHeadless runs launch.sh, which runs Java, neither with `exec`.
+    // The launcher leads its own process group, so kill the whole group.
+    let group = format!("-{}", child.id());
+    let _ = Command::new("kill")
+        .args(["-s", "KILL", "--", group.as_str()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let _ = child.kill();
 }
 
