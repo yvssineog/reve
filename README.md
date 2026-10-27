@@ -17,7 +17,7 @@ From the repository root, run:
 python scripts/bootstrap.py
 ```
 
-It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds and installs the rêve Ghidra extension. Re-run it after changing `Export.java` or `engine.proto`.
+It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds Ghidra's native decompiler where the release ships none (Apple Silicon) and builds and installs the rêve Ghidra extension. Re-run it after changing `Export.java` or `engine.proto`.
 
 The headless launcher is installed at:
 

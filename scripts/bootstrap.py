@@ -101,5 +101,9 @@ properties = GHIDRA / "support" / "launch.properties"
 override = f"JAVA_HOME_OVERRIDE={JDK.as_posix()}"
 properties.write_text(re.sub(r"(?m)^JAVA_HOME_OVERRIDE=.*$", lambda _: override, properties.read_text()))
 
+# Ghidra ships decompiler binaries for x64 Linux and Windows only.
+if (OS, ARCH) not in {("linux", "x64"), ("windows", "x64")} and not any(GHIDRA.glob("Ghidra/Features/Decompiler/build/os/*/decompile")):
+    gradle(GHIDRA / "support" / "gradle", "buildNatives")
+
 gradle(ROOT / "reve-engine" / "ghidra-adapter" / "ghidra-extension", "installExtension")
 print(f"Ready: {GHIDRA / 'support' / f'analyzeHeadless{BAT}'}")
