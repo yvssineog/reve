@@ -17,7 +17,7 @@ From the repository root, run it with Python 3.9 or newer (macOS's built-in `pyt
 python3 scripts/bootstrap.py
 ```
 
-It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds Ghidra's native decompiler where the release ships none (Apple Silicon) and builds and installs the rêve Ghidra extension. Re-run it after changing `Export.java` or `engine.proto`.
+It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds Ghidra's native decompiler where the release ships none (Apple Silicon) and builds and installs the rêve Ghidra extension. Re-run it after changing `engine.proto`. Edits to `Export.java` apply on the next analysis.
 
 The headless launcher is installed at:
 

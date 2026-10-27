@@ -2,7 +2,8 @@
 """Install the pinned Ghidra and Temurin JDK into .tools, then build and install the reve extension.
 
 Installed tools are skipped and the extension is always rebuilt, so re-run this
-after changing Export.java or engine.proto.
+after changing engine.proto or build.gradle. Export.java edits need no re-run:
+the Ghidra adapter runs the repo's copy.
 """
 
 import hashlib

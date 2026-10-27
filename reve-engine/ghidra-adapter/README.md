@@ -28,7 +28,10 @@ reve-engine/ghidra-adapter/ghidra-extension/dist/
 installation at `.tools/ghidra/ghidra_12.2_PUBLIC/Ghidra/Extensions/`. This
 makes the generated Java classes, protobuf runtime, and `Export.java` available
 to headless Ghidra without opening the GUI. Re-run `scripts/bootstrap.py` after
-changing the extension or `engine.proto`. The script also configures Ghidra to
+changing `build.gradle` or `engine.proto`. The Rust adapter passes this
+directory's `ghidra_scripts/` as `-scriptPath`, so Ghidra runs the repo's
+`Export.java` ahead of the installed copy and script edits need no reinstall.
+The script also configures Ghidra to
 use the project-local JDK at `.tools/java/temurin-25`; the Rust parser also sets
 that JDK for each headless process, so no global `JAVA_HOME` change is needed.
 

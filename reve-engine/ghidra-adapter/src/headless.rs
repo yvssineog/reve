@@ -15,6 +15,11 @@ use crate::{config::GhidraConfig, error::ParserError};
 
 const PROJECT_NAME: &str = "ReveAnalysis";
 const EXPORT_SCRIPT: &str = "Export.java";
+/// Searched before the installed extension, so `Export.java` edits apply without reinstalling it.
+const SCRIPTS_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/ghidra-extension/ghidra_scripts"
+);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Run Ghidra Headless to import and analyze `input`, then invoke `Export.java`.
@@ -37,6 +42,8 @@ pub(crate) fn run_headless(
         OsStr::new(PROJECT_NAME),
         OsStr::new("-import"),
         input.as_os_str(),
+        OsStr::new("-scriptPath"),
+        OsStr::new(SCRIPTS_DIR),
         OsStr::new("-postScript"),
         OsStr::new(EXPORT_SCRIPT),
         export_path.as_os_str(),
@@ -220,6 +227,11 @@ fn terminate_process_tree(child: &mut std::process::Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scripts_dir_holds_the_export_script() {
+        assert!(Path::new(SCRIPTS_DIR).join(EXPORT_SCRIPT).is_file());
+    }
 
     #[test]
     fn command_uses_the_configured_jdk_and_puts_it_first_on_path() {
