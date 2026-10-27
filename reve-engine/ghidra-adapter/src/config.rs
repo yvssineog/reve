@@ -136,7 +136,7 @@ impl fmt::Display for ConfigError {
             ),
             Self::JdkNotFound(path) => write!(
                 formatter,
-                "project JDK was not found at {}; run scripts/setup_tools.py to install it",
+                "project JDK was not found at {}; run scripts/bootstrap.py to install it",
                 path.display()
             ),
             Self::ProjectsPathNotDirectory(path) => write!(

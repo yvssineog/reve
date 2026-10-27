@@ -13,11 +13,11 @@ The parser uses **Ghidra 12.2** and **Eclipse Temurin JDK 25 (64-bit)**.
 
 From the repository root, run:
 
-```powershell
-python scripts/setup_tools.py
+```sh
+python scripts/bootstrap.py
 ```
 
-It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`.
+It downloads the Ghidra release and the latest Temurin 25 update for the current operating system and architecture, verifies their SHA-256 checksums, and extracts them under `.tools/`. It then builds and installs the rêve Ghidra extension. Re-run it after changing `Export.java` or `engine.proto`.
 
 The headless launcher is installed at:
 
@@ -28,7 +28,7 @@ The bundled JDK is under `.tools/java/temurin-25/`. The parser can use these pat
 
 ## Run the UI
 
-Run `cargo run -p reve-ui` to start the GPUI application. Opening a binary analyzes it with the bundled Ghidra, so run `scripts/setup_tools.py` and `scripts/build_ghidra_extension.py` first.
+Run `cargo run -p reve-ui` to start the GPUI application. Opening a binary analyzes it with the bundled Ghidra, so run `scripts/bootstrap.py` first.
 
 ## TODO
 

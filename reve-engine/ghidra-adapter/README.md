@@ -6,18 +6,17 @@ shared schema at `reve-engine/proto/engine.proto`.
 
 ## Build the Ghidra extension
 
-Run from the repository root after installing the pinned local tools:
+Run from the repository root:
 
 ```sh
-python scripts/setup_tools.py
-python scripts/build_ghidra_extension.py
+python scripts/bootstrap.py
 ```
 
-The build script selects the platform-specific Ghidra Gradle wrapper and uses
-the Temurin JDK installed under `.tools/`. Gradle generates Java sources from
-`reve-engine/proto/engine.proto`, compiles them into the extension JAR, and
-packages `protobuf-java` beside that JAR so Ghidra's extension classloader can
-load it.
+The script installs the pinned Ghidra and Temurin JDK under `.tools/` and runs
+the extension's `installExtension` Gradle task with them. Gradle generates Java
+sources from `reve-engine/proto/engine.proto`, compiles them into the extension
+JAR, and packages `protobuf-java` beside that JAR so Ghidra's extension
+classloader can load it.
 
 The installable archive is written to:
 
@@ -25,11 +24,11 @@ The installable archive is written to:
 reve-engine/ghidra-adapter/ghidra-extension/dist/
 ```
 
-The build script also extracts the extension into the project-local Ghidra
+`installExtension` also unpacks the extension into the project-local Ghidra
 installation at `.tools/ghidra/ghidra_12.2_PUBLIC/Ghidra/Extensions/`. This
 makes the generated Java classes, protobuf runtime, and `Export.java` available
-to headless Ghidra without opening the GUI. Re-run the build script after
-changing the extension or `engine.proto`. `setup_tools.py` configures Ghidra to
+to headless Ghidra without opening the GUI. Re-run `scripts/bootstrap.py` after
+changing the extension or `engine.proto`. The script also configures Ghidra to
 use the project-local JDK at `.tools/java/temurin-25`; the Rust parser also sets
 that JDK for each headless process, so no global `JAVA_HOME` change is needed.
 
@@ -67,9 +66,8 @@ and protobuf runtime can be loaded by Ghidra.
 
 The `reve-parse` binary runs the complete local flow: it invokes Ghidra,
 decodes the protobuf export, and prints a short summary of the shared Rust
-`Program`. Build the Ghidra extension once with `python
-scripts/build_ghidra_extension.py`; the script installs it into the local Ghidra
-distribution for headless use.
+`Program`. Run `python scripts/bootstrap.py` once first; it
+installs the extension into the local Ghidra distribution for headless use.
 
 On Windows PowerShell:
 

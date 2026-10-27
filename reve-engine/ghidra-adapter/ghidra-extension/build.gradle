@@ -54,3 +54,12 @@ tasks.matching { it.name in ['extractIncludeProto', 'extractProto'] }.configureE
 tasks.named('buildExtension') {
     dependsOn tasks.named('compileJava')
 }
+
+// Headless Ghidra only loads extensions unpacked under its install directory.
+tasks.register('installExtension', Sync) {
+    from(zipTree(tasks.named('buildExtension').flatMap { it.archiveFile })) {
+        eachFile { it.relativePath = new RelativePath(true, *it.relativePath.segments.drop(1)) }
+    }
+    includeEmptyDirs = false
+    into new File(ghidraInstallDir, "Ghidra/Extensions/${project.name}")
+}
