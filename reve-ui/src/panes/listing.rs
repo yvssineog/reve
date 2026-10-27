@@ -74,9 +74,11 @@ fn target(operands: &str) -> Option<Address> {
 pub struct Listing {
     program: Program,
     rows: Vec<Row>,
-    // Each instruction's address and row, in order. Both rise together, so either one
-    // finds an instruction by binary search.
-    instructions: Vec<(Address, usize)>,
+    // Each instruction's row, in row order.
+    instructions: Vec<usize>,
+    // Each instruction's address and row, in address order. A function's body can be split
+    // around other functions, so this order isn't row order.
+    addresses: Vec<(Address, usize)>,
     // A row index, always one of `instructions`.
     cursor: usize,
     // Hex digits every address shows with, so the address column fits the longest.
@@ -90,14 +92,15 @@ impl Listing {
     pub fn new(program: Program, cx: &mut Context<Self>) -> Self {
         let digits = digits(&program);
         let rows = layout(&program, digits);
-        let instructions = index(&program, &rows);
-        let cursor = instructions.first().map_or(0, |&(_, row)| row);
+        let (instructions, addresses) = index(&program, &rows);
+        let cursor = instructions.first().copied().unwrap_or(0);
         let scroll = UniformListScrollHandle::new();
         scroll.scroll_to_item(cursor, ScrollStrategy::Center);
         Self {
             program,
             rows,
             instructions,
+            addresses,
             cursor,
             scroll,
             digits,
@@ -124,14 +127,11 @@ impl Listing {
 
     // The row of the instruction `by` instructions from the cursor, held at both ends.
     fn moved(&self, by: isize) -> usize {
-        let at = self
-            .instructions
-            .binary_search_by_key(&self.cursor, |&(_, row)| row)
-            .unwrap_or(0);
+        let at = self.instructions.binary_search(&self.cursor).unwrap_or(0);
         let at = at
             .saturating_add_signed(by)
             .min(self.instructions.len() - 1);
-        self.instructions[at].1
+        self.instructions[at]
     }
 
     // Moves the cursor `by` instructions, scrolling no more than needed.
@@ -162,7 +162,7 @@ impl Listing {
     // Puts the cursor on the instruction at `address`. Every pane follows the cursor, so this
     // is how any of them goes somewhere.
     pub fn go_to(&mut self, address: Address, strategy: ScrollStrategy, cx: &mut Context<Self>) {
-        if let Some(ix) = row_at(&self.instructions, address) {
+        if let Some(ix) = row_at(&self.addresses, address) {
             self.jump(ix, strategy, cx);
         }
     }
@@ -356,9 +356,10 @@ fn xrefs(program: &Program, digits: usize) -> HashMap<Address, SharedString> {
         .collect()
 }
 
-// Each instruction's address and row, in row order.
-fn index(program: &Program, rows: &[Row]) -> Vec<(Address, usize)> {
-    rows.iter()
+// Each instruction's row in row order, and its address and row in address order.
+fn index(program: &Program, rows: &[Row]) -> (Vec<usize>, Vec<(Address, usize)>) {
+    let mut addresses: Vec<_> = rows
+        .iter()
         .enumerate()
         .filter_map(|(ix, row)| match *row {
             Row::Code(function, instruction) => Some((
@@ -367,15 +368,18 @@ fn index(program: &Program, rows: &[Row]) -> Vec<(Address, usize)> {
             )),
             _ => None,
         })
-        .collect()
+        .collect();
+    let instructions = addresses.iter().map(|&(_, row)| row).collect();
+    addresses.sort_unstable();
+    (instructions, addresses)
 }
 
 // The row of the instruction at `address`.
-fn row_at(instructions: &[(Address, usize)], address: Address) -> Option<usize> {
-    let at = instructions
+fn row_at(addresses: &[(Address, usize)], address: Address) -> Option<usize> {
+    let at = addresses
         .binary_search_by_key(&address, |&(address, _)| address)
         .ok()?;
-    Some(instructions[at].1)
+    Some(addresses[at].1)
 }
 
 // A header row's text, started on the mnemonic column and cut with an ellipsis.
@@ -475,10 +479,11 @@ mod tests {
         let mut program = program();
         program.functions[0].instructions[2].address = Address(0x1030);
         let rows = layout(&program, 8);
-        let instructions = index(&program, &rows);
-        for &(address, row) in &instructions {
-            assert_eq!(row_at(&instructions, address), Some(row), "{:x}", address.0);
+        let (instructions, addresses) = index(&program, &rows);
+        for &(address, row) in &addresses {
+            assert_eq!(row_at(&addresses, address), Some(row), "{:x}", address.0);
         }
+        assert_eq!(instructions, [1, 2, 3, 6, 7, 10], "steps follow rows");
     }
 
     #[test]
