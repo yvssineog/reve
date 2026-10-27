@@ -98,7 +98,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
                 "last=\"\"\nfor arg in \"$@\"; do last=\"$arg\"; done\nprintf '\\012\\004\\144' > \"$last\"\n"
             }
             "fail" => "echo fake stdout\necho fake stderr >&2\nexit 23\n",
-            "timeout" => "exec sleep 10\n",
+            // Like Ghidra's launch.sh, start the long-running child without
+            // `exec`, and record its pid so a test can check it was killed.
+            "timeout" => "sleep 30 &\necho $! > \"$(dirname \"$0\")/launcher-child.pid\"\nwait\n",
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
