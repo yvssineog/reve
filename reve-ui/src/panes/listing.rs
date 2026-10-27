@@ -409,7 +409,7 @@ fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
 mod tests {
     use reve_model::{Address, Function, Instruction, Program};
 
-    use super::{callee, digits, hex, xrefs};
+    use super::{callee, digits, hex, index, layout, row_at, xrefs};
 
     fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
         let instructions: Vec<_> = (0..)
@@ -468,6 +468,17 @@ mod tests {
             "XREF[2]: main:00001000(c), main:00001004(c)"
         );
         assert_eq!(xrefs.len(), 1, "nothing calls main or leaf");
+    }
+
+    #[test]
+    fn split_functions_find_every_instruction() {
+        let mut program = program();
+        program.functions[0].instructions[2].address = Address(0x1030);
+        let rows = layout(&program, 8);
+        let instructions = index(&program, &rows);
+        for &(address, row) in &instructions {
+            assert_eq!(row_at(&instructions, address), Some(row), "{:x}", address.0);
+        }
     }
 
     #[test]
