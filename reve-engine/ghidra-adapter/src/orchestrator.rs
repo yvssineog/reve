@@ -186,6 +186,34 @@ mod tests {
         assert_projects_clean(&config);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn analyze_timeout_kills_processes_the_launcher_started() {
+        let (temp, config, input) = setup("timeout");
+        // macOS can take about a second to first exec a freshly written
+        // script, and the fake must record its child's pid before the kill.
+        let adapter = GhidraAdapter::new(config.with_timeout(Duration::from_secs(2)));
+
+        assert!(matches!(
+            adapter.analyze(input),
+            Err(ParserError::TimedOut(_))
+        ));
+
+        let pid = fs::read_to_string(temp.path().join("launcher-child.pid"))
+            .expect("fake launcher started its child before the timeout");
+        let ps = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid.trim()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&ps.stdout);
+        assert!(
+            state.trim().is_empty() || state.trim_start().starts_with('Z'),
+            "launcher child {} is still running (state {})",
+            pid.trim(),
+            state.trim()
+        );
+    }
+
     #[test]
     fn analyze_reports_invalid_configuration() {
         let (temp, config, input) = setup("write");
