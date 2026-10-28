@@ -15,12 +15,12 @@ const BUDGET: Duration = Duration::from_micros(8_333);
 const SECOND: Duration = Duration::from_secs(1);
 
 // Frame stats on the top bar: frames drawn in the last second, their mean time, and the
-// slowest. A frame is timed from the root view's render to the end of its paint.
+// slowest. A frame is timed from the root view's render to the end of its paint. While shown,
+// the window draws on every display refresh, so the count reads the rate the display gets
+// rather than how often something changed.
 #[derive(Default)]
 pub struct Hud {
     frames: Rc<RefCell<Frames>>,
-    // Draws a frame every second, so the stats stay current while nothing else draws.
-    tick: Option<Task<()>>,
 }
 
 #[derive(Default)]
@@ -33,7 +33,11 @@ struct Frames {
 impl Hud {
     // Starts timing this frame and shows the stats of the ones before it. Paint it last, so
     // its end mark comes after the rest of the frame.
-    pub fn frame<V: 'static>(&mut self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
+    pub fn frame<V: 'static>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<V>,
+    ) -> impl IntoElement + use<V> {
         let now = Instant::now();
         let mut frames = self.frames.borrow_mut();
         frames.started = Some(now);
@@ -48,16 +52,7 @@ impl Hud {
         let total: Duration = frames.recent.iter().map(|&(_, took)| took).sum();
         let max = frames.recent.iter().map(|&(_, took)| took).max();
         drop(frames);
-        if self.tick.is_none() {
-            self.tick = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(SECOND).await;
-                    if this.update(cx, |_, cx| cx.notify()).is_err() {
-                        break;
-                    }
-                }
-            }));
-        }
+        window.request_animation_frame();
 
         let ms = |took: Duration| format!("{:.1}", took.as_secs_f64() * 1e3);
         let frames = self.frames.clone();

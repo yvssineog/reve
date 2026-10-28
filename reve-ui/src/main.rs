@@ -260,9 +260,9 @@ impl Reve {
 }
 
 impl Render for Reve {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Before the screen renders, so the frame's time covers it.
-        let hud = self.hud.as_mut().map(|hud| hud.frame(cx));
+        let hud = self.hud.as_mut().map(|hud| hud.frame(window, cx));
         div()
             .size_full()
             .relative()
