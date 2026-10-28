@@ -7,7 +7,7 @@ use gpui_kit::component::{StyledExt as _, h_flex};
 use gpui_kit::*;
 use reve_model::{Address, Function, Instruction, Program};
 
-use super::{cell, monospace, pressable};
+use super::{monospace, pressable};
 use crate::palette::Palette;
 
 // The key context the listing binds its shortcuts under.
@@ -20,9 +20,9 @@ pub const ROW: Pixels = px(18.);
 const CHAR: Pixels = px(7.2);
 // Column widths, in characters: address as long as the program's addresses plus 2, bytes 13,
 // mnemonic 7, operands 30. Labels start on the mnemonic column.
-const BYTES: Pixels = px(94.);
-const MNEMONIC: Pixels = px(51.);
-const OPERANDS: Pixels = px(217.);
+const BYTES: usize = 13;
+const MNEMONIC: usize = 7;
+const OPERANDS: usize = 30;
 pub const GUTTER: Pixels = px(12.);
 
 actions!(listing, [HalfPageDown, HalfPageUp]);
@@ -202,7 +202,7 @@ impl Listing {
             Row::Label(function, xrefs) => h_flex()
                 .w_full()
                 .h(ROW)
-                .pl(GUTTER + self.address_width() + BYTES)
+                .pl(GUTTER + self.address_width() + CHAR * BYTES as f32)
                 .pr(GUTTER)
                 .truncate()
                 .gap_4()
@@ -246,21 +246,20 @@ impl Listing {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
+        let mut columns = Columns::default();
+        columns.push(
+            &hex(instruction.address, self.digits),
+            self.digits + 2,
+            palette.fg_3,
+        );
+        columns.push(&bytes.join(" "), BYTES, palette.fg_4);
+        columns.push(&instruction.mnemonic, MNEMONIC, palette.mnemonic);
+        columns.push(operands, OPERANDS, hue);
 
         let row = h_flex().id(ix).w_full().h(ROW).px(GUTTER);
         pressable(row, ix == self.cursor, palette)
-            .child(cell(
-                self.address_width(),
-                hex(instruction.address, self.digits),
-                palette.fg_3,
-            ))
-            .child(cell(BYTES, bytes.join(" "), palette.fg_4))
-            .child(cell(
-                MNEMONIC,
-                instruction.mnemonic.clone(),
-                palette.mnemonic,
-            ))
-            .child(cell(OPERANDS, operands.clone(), hue))
+            .whitespace_nowrap()
+            .child(columns.text())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| this.jump(ix, ScrollStrategy::Nearest, cx)),
@@ -309,6 +308,45 @@ impl Render for Listing {
                 .pb_10(),
             )
             .vertical_scrollbar(&self.scroll)
+    }
+}
+
+// A row's columns as one run of text, each cut with an ellipsis to its width in characters
+// and padded to it, so a row shapes and lays out once rather than once per column.
+#[derive(Default)]
+struct Columns {
+    text: String,
+    hues: Vec<(Range<usize>, HighlightStyle)>,
+    // Spaces still owed to the last column's width.
+    pad: usize,
+}
+
+impl Columns {
+    fn push(&mut self, cell: &str, width: usize, hue: Hsla) {
+        self.text.extend(std::iter::repeat_n(' ', self.pad));
+        let start = self.text.len();
+        if cell.chars().count() > width {
+            let kept: String = cell.chars().take(width - 1).collect();
+            self.text.push_str(kept.trim_end());
+            self.text.push('…');
+        } else {
+            self.text.push_str(cell);
+        }
+        self.pad = width - self.text[start..].chars().count();
+        if self.text.len() > start {
+            // A highlight's color blends over the text's and keeps its alpha, which would turn
+            // the palette's translucent inks opaque. Set the hue opaque, then fade it back.
+            let hue = HighlightStyle {
+                color: Some(Hsla { a: 1., ..hue }),
+                fade_out: Some(1. - hue.a),
+                ..HighlightStyle::default()
+            };
+            self.hues.push((start..self.text.len(), hue));
+        }
+    }
+
+    fn text(self) -> StyledText {
+        StyledText::new(self.text).with_highlights(self.hues)
     }
 }
 
@@ -388,7 +426,9 @@ fn hex(address: Address, digits: usize) -> String {
 mod tests {
     use reve_model::{Address, Function, Instruction, Program};
 
-    use super::{callee, digits, hex, index, layout, row_at, xrefs};
+    use gpui_kit::{Hsla, white};
+
+    use super::{Columns, callee, digits, hex, index, layout, row_at, xrefs};
 
     fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
         let instructions: Vec<_> = (0..)
@@ -469,5 +509,33 @@ mod tests {
         let digits = digits(&program);
         assert_eq!(digits, 16);
         assert_eq!(hex(Address(0x1000), digits), "0000000000001000");
+    }
+
+    #[test]
+    fn columns_cut_and_pad_to_their_widths() {
+        let mut columns = Columns::default();
+        let ink = white().opacity(0.5);
+        columns.push("48 8b bc 24 c0 00", 5, ink);
+        columns.push("", 3, ink);
+        columns.push("MOV", 7, white());
+        columns.push("RDI", 4, ink);
+        assert_eq!(columns.text, "48 8…   MOV    RDI");
+        let ranges: Vec<_> = columns
+            .hues
+            .iter()
+            .map(|(range, _)| range.clone())
+            .collect();
+        assert_eq!(
+            ranges,
+            [0..7, 10..13, 17..20],
+            "byte ranges; empty cells take no hue"
+        );
+        let hue = columns.hues[0].1;
+        assert_eq!(hue.color, Some(Hsla { a: 1., ..ink }));
+        assert_eq!(
+            hue.fade_out,
+            Some(0.5),
+            "translucent inks fade back to their alpha"
+        );
     }
 }
