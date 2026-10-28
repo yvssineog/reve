@@ -18,6 +18,7 @@ use gpui_kit::*;
 use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
+use header::Header;
 use logo::Logo;
 use palette::Palette;
 use panes::decompile::Decompile;
@@ -95,8 +96,8 @@ actions!(
 struct Reve {
     // Takes the app's shortcuts when no pane holds focus.
     focus: FocusHandle,
-    sidebar_open: bool,
-    bottom_open: bool,
+    // Also holds which panels are open.
+    header: Entity<Header>,
     screen: Screen,
 }
 
@@ -138,8 +139,10 @@ impl Reve {
         window.focus(&focus, cx);
         Self {
             focus,
-            sidebar_open: true,
-            bottom_open: true,
+            header: cx.new(|_| Header {
+                sidebar_open: true,
+                bottom_open: true,
+            }),
             screen: Screen::Empty(cx.new(Logo::new)),
         }
     }
@@ -250,7 +253,7 @@ impl Reve {
 }
 
 impl Render for Reve {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = match &self.screen {
             Screen::Empty(logo) => {
                 return empty::screen(logo.clone(), cx)
@@ -261,7 +264,10 @@ impl Render for Reve {
             }
             Screen::Open(workspace) => workspace,
         };
-        let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
+        let &Header {
+            sidebar_open,
+            bottom_open,
+        } = self.header.read(cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
         let (busy, status, panes) = match &workspace.analysis {
@@ -281,7 +287,7 @@ impl Render for Reve {
 
         // The Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
         let sidebar = resizable_panel()
-            .visible(self.sidebar_open)
+            .visible(sidebar_open)
             .size(px(264.))
             .size_range(px(200.)..px(480.))
             .fixed()
@@ -323,7 +329,7 @@ impl Render for Reve {
                 )
                 .child(
                     pane(theme, "function-duotone", palette.symbol, "Functions", None)
-                        .visible(self.bottom_open)
+                        .visible(bottom_open)
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
                         .fixed()
@@ -336,14 +342,26 @@ impl Render for Reve {
             .bg(theme.title_bar)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
-                this.sidebar_open = !this.sidebar_open;
-                cx.notify();
+                this.header.update(cx, |header, cx| {
+                    header.sidebar_open = !header.sidebar_open;
+                    cx.notify();
+                })
             }))
             .on_action(cx.listener(|this, _: &ToggleBottom, _, cx| {
-                this.bottom_open = !this.bottom_open;
-                cx.notify();
+                this.header.update(cx, |header, cx| {
+                    header.bottom_open = !header.bottom_open;
+                    cx.notify();
+                })
             }))
-            .child(header)
+            // Cached like the panes; the window redraws its header only when it changes.
+            .child(
+                AnyView::from(self.header.clone()).cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(header::HEIGHT)
+                        .flex_none(),
+                ),
+            )
             // Dividers between panes are hairlines that can be dragged.
             .child(
                 div()

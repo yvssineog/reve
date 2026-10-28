@@ -13,15 +13,22 @@ pub const HEIGHT: Pixels = px(42.);
 // Header glyphs are 18px Phosphor icons.
 const GLYPH: Pixels = px(18.);
 
+// The window's header, and which panels it shows open. Notifying it redraws the window too.
+pub struct Header {
+    pub sidebar_open: bool,
+    pub bottom_open: bool,
+}
+
+impl Render for Header {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        header(self.sidebar_open, self.bottom_open, window, cx)
+    }
+}
+
 // Left: sidebar toggle and history. Center: the "Go to" field. Right: light/dark
 // switch and windows toggle.
 // Both sides take half the leftover width, so the field sits on the window's center.
-pub fn header(
-    sidebar_open: bool,
-    bottom_open: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> TitleBar {
+fn header(sidebar_open: bool, bottom_open: bool, window: &mut Window, cx: &mut App) -> TitleBar {
     let dark = cx.theme().mode.is_dark();
     let sidebar = command(
         tool("sidebar", panel(sidebar_open), cx),
