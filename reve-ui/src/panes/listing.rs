@@ -83,8 +83,38 @@ pub struct Listing {
     cursor: usize,
     // Hex digits every address shows with, so the address column fits the longest.
     digits: usize,
+    history: History,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
+}
+
+// The rows jumps left the cursor on, so Back and Forward can return. Steps aren't jumps.
+#[derive(Default)]
+struct History {
+    back: Vec<usize>,
+    forward: Vec<usize>,
+}
+
+impl History {
+    // A jump from row `from`: Back returns there, and Forward has nowhere left to go.
+    fn leave(&mut self, from: usize) {
+        self.back.push(from);
+        self.forward.clear();
+    }
+
+    // Back from row `from`: where the last jump left, with `from` kept for Forward.
+    fn back(&mut self, from: usize) -> Option<usize> {
+        let to = self.back.pop()?;
+        self.forward.push(from);
+        Some(to)
+    }
+
+    // Forward from row `from`: where the last Back left.
+    fn forward(&mut self, from: usize) -> Option<usize> {
+        let to = self.forward.pop()?;
+        self.back.push(from);
+        Some(to)
+    }
 }
 
 impl Listing {
@@ -104,6 +134,7 @@ impl Listing {
             cursor,
             scroll,
             digits,
+            history: History::default(),
             focus: cx.focus_handle(),
         }
     }
@@ -153,18 +184,55 @@ impl Listing {
 
     // Follows the call under the cursor to the function's entry.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        let (_, instruction) = self.under_cursor();
+        let (_, instruction) = self.code(self.cursor);
         if let Some(function) = callee(&self.program, instruction) {
-            self.go_to(function.entry, ScrollStrategy::Center, cx);
+            self.go_to(function.entry, cx);
         }
     }
 
-    // Puts the cursor on the instruction at `address`. Every pane follows the cursor, so this
-    // is how any of them goes somewhere.
-    pub fn go_to(&mut self, address: Address, strategy: ScrollStrategy, cx: &mut Context<Self>) {
-        if let Some(ix) = row_at(&self.addresses, address) {
-            self.jump(ix, strategy, cx);
+    // Jumps the cursor to the instruction at `address`, centered, and remembers where it left
+    // for Back. Every pane follows the cursor, so this is how any of them goes somewhere.
+    pub fn go_to(&mut self, address: Address, cx: &mut Context<Self>) {
+        let Some(ix) = row_at(&self.addresses, address) else {
+            return;
+        };
+        if ix != self.cursor {
+            self.history.leave(self.cursor);
         }
+        self.jump(ix, ScrollStrategy::Center, cx);
+    }
+
+    // Moves the cursor to the instruction at `address` the way a step does: scrolled no more
+    // than needed, and not a jump Back returns from.
+    pub fn move_to(&mut self, address: Address, cx: &mut Context<Self>) {
+        if let Some(ix) = row_at(&self.addresses, address) {
+            self.jump(ix, ScrollStrategy::Nearest, cx);
+        }
+    }
+
+    pub fn back(&mut self, cx: &mut Context<Self>) {
+        if let Some(ix) = self.history.back(self.cursor) {
+            self.jump(ix, ScrollStrategy::Center, cx);
+        }
+    }
+
+    pub fn forward(&mut self, cx: &mut Context<Self>) {
+        if let Some(ix) = self.history.forward(self.cursor) {
+            self.jump(ix, ScrollStrategy::Center, cx);
+        }
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.history.back.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.history.forward.is_empty()
+    }
+
+    // The instruction at `address`, or else the first one after it, and its function.
+    pub fn at_or_after(&self, address: Address) -> Option<(&Function, &Instruction)> {
+        row_from(&self.addresses, address).map(|ix| self.code(ix))
     }
 
     pub fn program(&self) -> &Program {
@@ -173,18 +241,18 @@ impl Listing {
 
     // The function the cursor is in.
     pub fn function(&self) -> &Function {
-        self.under_cursor().0
+        self.code(self.cursor).0
     }
 
     // The address of the instruction under the cursor.
     pub fn address(&self) -> Address {
-        self.under_cursor().1.address
+        self.code(self.cursor).1.address
     }
 
-    // The instruction under the cursor, and its function.
-    fn under_cursor(&self) -> (&Function, &Instruction) {
-        let Row::Code(function, instruction) = self.rows[self.cursor] else {
-            unreachable!("the cursor is always on an instruction");
+    // The instruction on row `ix`, and its function. The cursor is always on one.
+    fn code(&self, ix: usize) -> (&Function, &Instruction) {
+        let Row::Code(function, instruction) = self.rows[ix] else {
+            unreachable!("row {ix} holds no instruction");
         };
         let function = &self.program.functions[function];
         (function, &function.instructions[instruction])
@@ -410,6 +478,12 @@ fn row_at(addresses: &[(Address, usize)], address: Address) -> Option<usize> {
     Some(addresses[at].1)
 }
 
+// The row of the instruction at `address`, or else of the first one after it.
+fn row_from(addresses: &[(Address, usize)], address: Address) -> Option<usize> {
+    let at = addresses.partition_point(|&(at, _)| at < address);
+    addresses.get(at).map(|&(_, row)| row)
+}
+
 // Hex digits for the program's highest instruction address, at least 8.
 fn digits(program: &Program) -> usize {
     let instructions = program.functions.iter().flat_map(|f| &f.instructions);
@@ -428,7 +502,7 @@ mod tests {
 
     use gpui_kit::{Hsla, white};
 
-    use super::{Columns, callee, digits, hex, index, layout, row_at, xrefs};
+    use super::{Columns, History, callee, digits, hex, index, layout, row_at, row_from, xrefs};
 
     fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
         let instructions: Vec<_> = (0..)
@@ -499,6 +573,35 @@ mod tests {
             assert_eq!(row_at(&addresses, address), Some(row), "{:x}", address.0);
         }
         assert_eq!(instructions, [1, 2, 3, 6, 7, 10], "steps follow rows");
+        assert_eq!(
+            row_from(&addresses, Address(0x1002)),
+            Some(2),
+            "snaps to 0x1004"
+        );
+        assert_eq!(
+            row_from(&addresses, Address(0x1008)),
+            Some(6),
+            "the next address, in helper, not the next row"
+        );
+        assert_eq!(row_from(&addresses, Address(0x1031)), None, "past the last");
+    }
+
+    #[test]
+    fn history_walks_jumps_back_and_forward() {
+        let mut history = History::default();
+        history.leave(1);
+        history.leave(5);
+        assert_eq!(history.back(9), Some(5));
+        assert_eq!(history.back(5), Some(1));
+        assert_eq!(history.back(1), None, "nothing before the first jump");
+        assert_eq!(history.forward(1), Some(5));
+        history.leave(5);
+        assert_eq!(
+            history.forward(7),
+            None,
+            "a new jump drops what Forward held"
+        );
+        assert_eq!(history.back(7), Some(5));
     }
 
     #[test]

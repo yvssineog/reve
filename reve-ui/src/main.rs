@@ -1,4 +1,5 @@
 mod empty;
+mod go_to;
 mod header;
 mod hud;
 mod logo;
@@ -90,9 +91,16 @@ actions!(
         ToggleSidebar,
         ToggleBottom,
         ToggleAppearance,
-        ToggleFrameStats
+        ToggleFrameStats,
+        GoTo,
+        GoBack,
+        GoForward
     ]
 );
+
+// The open workspace's key context. Its one-letter shortcuts stop at dialogs over it, so
+// typing in them still types.
+const WORKSPACE: &str = "Workspace";
 
 // The main view: the empty screen until a binary is open, then header, body, footer
 // stacked top to bottom.
@@ -135,6 +143,8 @@ struct Panes {
     listing: Entity<Listing>,
     decompile: Entity<Decompile>,
     functions: Entity<Functions>,
+    // Lights the header's Back and Forward while the listing has jumps to walk.
+    _history: Subscription,
 }
 
 impl Reve {
@@ -147,6 +157,8 @@ impl Reve {
             header: cx.new(|_| Header {
                 sidebar_open: true,
                 bottom_open: true,
+                back: false,
+                forward: false,
             }),
             screen: Screen::Empty(cx.new(Logo::new)),
             // Shown in debug builds; secondary-alt-p toggles them in any build.
@@ -207,6 +219,17 @@ impl Reve {
         .detach();
     }
 
+    // The listing, once Ghidra is done with the binary.
+    fn listing(&self) -> Option<Entity<Listing>> {
+        match &self.screen {
+            Screen::Open(Workspace {
+                analysis: Analysis::Done(panes),
+                ..
+            }) => Some(panes.listing.clone()),
+            _ => None,
+        }
+    }
+
     // Fills the Symbol Tree, Listing, Decompile and Functions, or says why not. The listing
     // takes focus unless the user has already put it in a pane.
     fn analyzed(
@@ -243,6 +266,16 @@ impl Reve {
                 let symbols = cx.new(|cx| Symbols::new(listing.clone(), cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
                 let functions = cx.new(|cx| Functions::new(listing.clone(), cx));
+                let history = cx.observe(&listing, |this, listing, cx| {
+                    let listing = listing.read(cx);
+                    let walkable = (listing.can_go_back(), listing.can_go_forward());
+                    this.header.update(cx, |header, cx| {
+                        if (header.back, header.forward) != walkable {
+                            (header.back, header.forward) = walkable;
+                            cx.notify();
+                        }
+                    });
+                });
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
@@ -252,6 +285,7 @@ impl Reve {
                     listing,
                     decompile,
                     functions,
+                    _history: history,
                 })
             }
         };
@@ -294,6 +328,7 @@ impl Reve {
         let &Header {
             sidebar_open,
             bottom_open,
+            ..
         } = self.header.read(cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
@@ -368,6 +403,22 @@ impl Reve {
             .size_full()
             .bg(theme.title_bar)
             .track_focus(&self.focus)
+            .key_context(WORKSPACE)
+            .on_action(cx.listener(|this, _: &GoTo, window, cx| {
+                if let Some(listing) = this.listing() {
+                    go_to::open(listing, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &GoBack, _, cx| {
+                if let Some(listing) = this.listing() {
+                    listing.update(cx, Listing::back);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &GoForward, _, cx| {
+                if let Some(listing) = this.listing() {
+                    listing.update(cx, Listing::forward);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.header.update(cx, |header, cx| {
                     header.sidebar_open = !header.sidebar_open;
@@ -441,7 +492,10 @@ fn main() {
             key("secondary-b", ToggleSidebar, cx),
             key("secondary-j", ToggleBottom, cx),
             key("secondary-alt-p", ToggleFrameStats, cx),
+            key("secondary-[", GoBack, cx),
+            key("secondary-]", GoForward, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
+            KeyBinding::new("g", GoTo, Some(WORKSPACE)),
         ];
         cx.bind_keys(keys);
 

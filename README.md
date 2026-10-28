@@ -40,6 +40,8 @@ Press `I` on the empty screen to pick a binary. Once Ghidra finishes, the worksp
 
 Pressing a function in Symbol Tree or Functions takes every pane to it.
 
+Press `G` or click the field at the top to go to an address or a function by name. An address between instructions lands on the next one. `⌘[` and `⌘]` walk back and forward through jumps: following a call, picking a function, or going somewhere with Go To. Stepping through instructions doesn't count as a jump.
+
 ## TODO
 
 `reve-model` doesn't carry these yet, so the UI leaves them out:

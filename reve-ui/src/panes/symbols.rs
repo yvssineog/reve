@@ -187,11 +187,7 @@ fn row(
         )
         .when_some(target, |row, entry| {
             let listing = listing.clone();
-            row.on_click(move |_, _, cx| {
-                listing.update(cx, |listing, cx| {
-                    listing.go_to(entry, ScrollStrategy::Center, cx)
-                })
-            })
+            row.on_click(move |_, _, cx| listing.update(cx, |listing, cx| listing.go_to(entry, cx)))
         })
         .into_any_element()
 }

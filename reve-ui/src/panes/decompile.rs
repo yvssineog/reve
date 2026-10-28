@@ -117,9 +117,8 @@ impl Decompile {
     fn pick(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let lines = self.code.as_deref().unwrap_or_default();
         if let Some(address) = lines.get(ix).and_then(|line| line.target(self.address)) {
-            self.listing.update(cx, |listing, cx| {
-                listing.go_to(address, ScrollStrategy::Nearest, cx)
-            });
+            self.listing
+                .update(cx, |listing, cx| listing.move_to(address, cx));
         }
         window.focus(&self.listing.focus_handle(cx), cx);
     }

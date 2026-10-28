@@ -7,28 +7,37 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
-use crate::{ToggleAppearance, ToggleBottom, ToggleSidebar, icon};
+use crate::{GoBack, GoForward, GoTo, ToggleAppearance, ToggleBottom, ToggleSidebar, icon};
 
 pub const HEIGHT: Pixels = px(42.);
 // Header glyphs are 18px Phosphor icons.
 const GLYPH: Pixels = px(18.);
 
-// The window's header, and which panels it shows open. Notifying it redraws the window too.
+// The window's header, which panels it shows open, and whether Back and Forward have
+// anywhere to go. Notifying it redraws the window too.
 pub struct Header {
     pub sidebar_open: bool,
     pub bottom_open: bool,
+    pub back: bool,
+    pub forward: bool,
 }
 
 impl Render for Header {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        header(self.sidebar_open, self.bottom_open, window, cx)
+        header(self, window, cx)
     }
 }
 
 // Left: sidebar toggle and history. Center: the "Go to" field. Right: light/dark
 // switch and windows toggle.
 // Both sides take half the leftover width, so the field sits on the window's center.
-fn header(sidebar_open: bool, bottom_open: bool, window: &mut Window, cx: &mut App) -> TitleBar {
+fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
+    let &Header {
+        sidebar_open,
+        bottom_open,
+        back,
+        forward,
+    } = header;
     let dark = cx.theme().mode.is_dark();
     let sidebar = command(
         tool("sidebar", panel(sidebar_open), cx),
@@ -64,9 +73,13 @@ fn header(sidebar_open: bool, bottom_open: bool, window: &mut Window, cx: &mut A
         },
         ToggleAppearance,
     );
-    // Back and Forward stay disabled until there is history to walk.
-    let back = tool("back", icon("caret-left", GLYPH), cx).disabled(true);
-    let forward = tool("forward", icon("caret-right", GLYPH), cx).disabled(true);
+    let back = command(tool("back", icon("caret-left", GLYPH), cx), "Back", GoBack).disabled(!back);
+    let forward = command(
+        tool("forward", icon("caret-right", GLYPH), cx),
+        "Forward",
+        GoForward,
+    )
+    .disabled(!forward);
 
     TitleBar::new()
         .h(HEIGHT)
@@ -148,6 +161,7 @@ fn go_to(window: &Window, cx: &App) -> Button {
                 .child("Go to address or symbol")
                 .child(key_badge("G", cx).ml_auto()),
         )
+        .on_click(|_, window, cx| window.dispatch_action(GoTo.boxed_clone(), cx))
 }
 
 // The badge naming a control's one-key shortcut.
