@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState, tree};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
@@ -9,10 +11,16 @@ use super::listing::Listing;
 use crate::icon;
 use crate::palette::Palette;
 
+// How long the cursor rests in a function before the tree marks it.
+const SETTLE: Duration = Duration::from_millis(50);
+
 // Every function by name, the one the listing cursor is in marked and in view.
 pub struct Symbols {
     listing: Entity<Listing>,
     tree: Entity<TreeState>,
+    // The listing cursor's function, marked or about to be.
+    current: Address,
+    marking: Option<Task<()>>,
     _sync: Subscription,
 }
 
@@ -30,13 +38,29 @@ impl Symbols {
         });
         let sync = cx.observe(&listing, |this, listing, cx| {
             let entry = listing.read(cx).function().entry;
-            this.tree.update(cx, |tree, cx| mark(tree, entry, cx));
+            if entry != this.current {
+                this.current = entry;
+                this.marking = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(SETTLE).await;
+                    this.update(cx, |this, cx| this.mark(cx)).ok();
+                }));
+            }
         });
         Self {
             listing,
             tree,
+            current: entry,
+            marking: None,
             _sync: sync,
         }
+    }
+
+    // Marks the cursor's function once the cursor rests there. Marking jumps the tree to
+    // another run of names, all new text to lay out; held arrows would pay for it every step
+    // and the tree would flicker through names nobody can read.
+    fn mark(&mut self, cx: &mut Context<Self>) {
+        let entry = self.current;
+        self.tree.update(cx, |tree, cx| mark(tree, entry, cx));
     }
 }
 
