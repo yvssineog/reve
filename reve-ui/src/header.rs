@@ -40,24 +40,17 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
     } = header;
     let dark = cx.theme().mode.is_dark();
     let sidebar = command(
-        tool("sidebar", panel(sidebar_open), cx),
+        tool("sidebar", sidebar_glyph(sidebar_open, GLYPH), cx),
         sidebar_label(sidebar_open),
         ToggleSidebar,
     );
-    // The sidebar glyph turned a quarter counterclockwise, so its panel sits at the bottom.
     let bottom = command(
-        tool("bottom", panel(bottom_open).rotate(radians(-FRAC_PI_2)), cx),
+        tool("bottom", bottom_glyph(bottom_open, GLYPH), cx),
         bottom_label(bottom_open),
         ToggleBottom,
     );
-    // A yellow moon in the dark, a purple sun in the light.
-    let (glyph, hue) = if dark {
-        ("moon-duotone", oklch(0.86, 0.15, 88.))
-    } else {
-        ("sun-duotone", oklch(0.56, 0.17, 298.4))
-    };
     let appearance = command(
-        tool("appearance", icon(glyph, GLYPH).text_color(hue), cx),
+        tool("appearance", appearance_glyph(dark, GLYPH), cx),
         appearance_label(dark),
         ToggleAppearance,
     );
@@ -137,9 +130,25 @@ fn command(button: Button, label: &'static str, action: impl Action + Clone) -> 
         .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
 }
 
-// The panel toggle glyph: a rounded square with the panel cut out, wider when open.
-fn panel(open: bool) -> Icon {
-    icon(if open { "panel-open" } else { "panel-closed" }, GLYPH)
+// The toggles' glyphs, alike here and in the command palette. The sidebar's is a rounded
+// square with the panel cut out, wider when open.
+pub fn sidebar_glyph(open: bool, size: Pixels) -> Icon {
+    icon(if open { "panel-open" } else { "panel-closed" }, size)
+}
+
+// The sidebar's glyph turned a quarter counterclockwise, so its panel sits at the bottom.
+pub fn bottom_glyph(open: bool, size: Pixels) -> Icon {
+    sidebar_glyph(open, size).rotate(radians(-FRAC_PI_2))
+}
+
+// A yellow moon in the dark, a purple sun in the light.
+pub fn appearance_glyph(dark: bool, size: Pixels) -> Icon {
+    let (glyph, hue) = if dark {
+        ("moon-duotone", oklch(0.86, 0.15, 88.))
+    } else {
+        ("sun-duotone", oklch(0.56, 0.17, 298.4))
+    };
+    icon(glyph, size).text_color(hue)
 }
 
 // The centered "Go to address or symbol" field. Its corners are concentric
@@ -173,8 +182,8 @@ fn go_to(window: &Window, cx: &App) -> Button {
         .on_click(|_, window, cx| window.dispatch_action(GoTo.boxed_clone(), cx))
 }
 
-// The badge naming a control's one-key shortcut.
-pub fn key_badge(key: &'static str, cx: &App) -> Div {
+// The badge naming a control's shortcut.
+pub fn key_badge(key: impl IntoElement, cx: &App) -> Div {
     let ink = cx.theme().foreground;
     h_flex()
         .h(px(18.))

@@ -1,132 +1,75 @@
-use gpui_kit::component::command::{Command, CommandItem, CommandState};
-use gpui_kit::component::{ActiveTheme as _, WindowExt as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use std::rc::Rc;
+
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 use reve_model::{Address, Function};
 
-use crate::commands;
+use crate::icon;
+use crate::menu::{self, Note, Pick, Row, Section};
 use crate::palette::Palette;
 use crate::panes::listing::Listing;
 
-// Places the picker lists at most.
+// Places Go To lists at most.
 const SHOWN: usize = 8;
 
-// Go To: an address or a function's name, and the places it could mean. Picking one jumps the
-// listing there and hands it the keyboard.
-pub struct Picker {
-    listing: Entity<Listing>,
-    query: Entity<CommandState>,
-    places: Vec<Place>,
-}
-
-// Somewhere the query leads: an instruction by its address, or a function by its name.
-struct Place {
-    label: SharedString,
-    // The instruction's function, or the function's address.
-    detail: SharedString,
-    address: Address,
-}
-
-// Opens Go To below the header, its field focused.
+// Opens Go To below the header: an address or a function's name, and the places it could
+// mean. Picking one jumps the listing there and hands it the keyboard.
 pub fn open(listing: Entity<Listing>, window: &mut Window, cx: &mut App) {
-    let query = cx.new(|cx| CommandState::new(window, cx));
-    let picker = cx.new(|_| Picker {
-        listing,
-        query: query.clone(),
-        places: Vec::new(),
-    });
-    commands::present(query, window, cx, move |_, _| picker.clone());
-}
-
-impl Picker {
-    fn search(&mut self, query: &str, cx: &mut Context<Self>) {
-        self.places = places(self.listing.read(cx), query.trim());
-        cx.notify();
-    }
-
-    fn pick(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(address) = self.places.get(ix).map(|place| place.address) else {
-            return;
-        };
-        self.listing
-            .update(cx, |listing, cx| listing.go_to(address, cx));
-        window.close_dialog(cx);
-        window.focus(&self.listing.focus_handle(cx), cx);
-    }
-}
-
-impl Render for Picker {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (searched, picked) = (cx.entity().downgrade(), cx.entity().downgrade());
-        let items = self.places.iter().map(|place| {
-            let (label, detail) = (place.label.clone(), place.detail.clone());
-            CommandItem::new()
-                .label(label.clone())
-                .child(move |_, cx| row(label.clone(), detail.clone(), cx))
-        });
-        Command::new(&self.query)
-            .bordered(false)
-            .filterable(false)
-            .placeholder("Address or symbol")
-            .items(items)
-            // Nothing typed, nothing to say.
-            .empty(|query, _, cx| {
-                div().when(!query.query(cx).is_empty(), |empty| {
-                    empty
-                        .py_4()
-                        .text_center()
-                        .text_sm()
-                        .text_color(Palette::of(cx).fg_3)
-                        .child("No address or function by that name")
-                })
-            })
-            .on_query(move |query, _, cx| {
-                searched
-                    .update(cx, |picker, cx| picker.search(query, cx))
-                    .ok();
-            })
-            .on_confirm(move |ix, window, cx| {
-                picked
-                    .update(cx, |picker, cx| picker.pick(ix.row, window, cx))
-                    .ok();
-            })
-    }
-}
-
-// A place in monospace, what it is quieter at the right.
-fn row(label: SharedString, detail: SharedString, cx: &App) -> Div {
-    h_flex()
-        .flex_1()
-        .min_w_0()
-        .gap_3()
-        .font_family(cx.theme().mono_font_family.clone())
-        .child(div().flex_1().min_w_0().truncate().child(label))
-        .child(
-            div()
-                .flex_none()
-                .text_xs()
-                .text_color(Palette::of(cx).fg_3)
-                .child(detail),
-        )
+    let font = cx.theme().mono_font_family.clone();
+    menu::open(
+        "Address or symbol",
+        "No address or function by that name",
+        font,
+        move |query, cx| places(&listing, query, cx),
+        window,
+        cx,
+    );
 }
 
 // What `query` could mean, best first: the instruction at the address it spells or the next
-// one after, then the functions it names.
-fn places(listing: &Listing, query: &str) -> Vec<Place> {
-    let at = address(query).and_then(|address| listing.at_or_after(address));
-    let at = at.map(|(function, instruction)| Place {
-        label: listing.hex(instruction.address).into(),
-        detail: function.name.clone().into(),
-        address: instruction.address,
-    });
-    let named = named(&listing.program().functions, query)
+// one after, then the functions it names. Each wears its pane's glyph.
+fn places(listing: &Entity<Listing>, query: &str, cx: &App) -> Vec<Section> {
+    let palette = Palette::of(cx);
+    let view = listing.read(cx);
+    let at: Vec<Row> = address(query)
+        .and_then(|address| view.at_or_after(address))
+        .map(|(function, instruction)| Row {
+            icon: icon("cpu-duotone", menu::GLYPH).text_color(palette.mnemonic),
+            label: view.hex(instruction.address).into(),
+            note: Note::Text(function.name.clone().into()),
+            pick: jump(listing, instruction.address),
+        })
         .into_iter()
-        .map(|function| Place {
+        .collect();
+    let named = named(&view.program().functions, query)
+        .into_iter()
+        .take(SHOWN - at.len())
+        .map(|function| Row {
+            icon: icon("function-duotone", menu::GLYPH).text_color(palette.name(&function.name)),
             label: function.name.clone().into(),
-            detail: listing.hex(function.entry).into(),
-            address: function.entry,
-        });
-    at.into_iter().chain(named).take(SHOWN).collect()
+            note: Note::Text(view.hex(function.entry).into()),
+            pick: jump(listing, function.entry),
+        })
+        .collect();
+    vec![
+        Section {
+            heading: "Address",
+            rows: at,
+        },
+        Section {
+            heading: "Functions",
+            rows: named,
+        },
+    ]
+}
+
+// Jumps the listing to `address` and hands it the keyboard.
+fn jump(listing: &Entity<Listing>, address: Address) -> Pick {
+    let listing = listing.clone();
+    Rc::new(move |window, cx| {
+        listing.update(cx, |listing, cx| listing.go_to(address, cx));
+        window.focus(&listing.focus_handle(cx), cx);
+    })
 }
 
 // The address `query` spells in hex, with or without `0x`.

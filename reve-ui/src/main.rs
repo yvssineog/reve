@@ -4,6 +4,7 @@ mod go_to;
 mod header;
 mod hud;
 mod logo;
+mod menu;
 mod palette;
 mod panes;
 
@@ -24,6 +25,7 @@ use reve_model::Program;
 use header::Header;
 use hud::Hud;
 use logo::Logo;
+use menu::Section;
 use palette::Palette;
 use panes::decompile::Decompile;
 use panes::functions::Functions;
@@ -45,6 +47,7 @@ const ICONS: &[(&str, &[u8])] = icons![
     "caret-left",
     "caret-right",
     "caret-down",
+    "magnifying-glass",
     "magnifying-glass-bold",
     "folder-simple-duotone",
     "tree-structure-duotone",
@@ -54,6 +57,8 @@ const ICONS: &[(&str, &[u8])] = icons![
     "sign-in-duotone",
     "sun-duotone",
     "moon-duotone",
+    "gauge-duotone",
+    "sign-out-duotone",
     "panel-open",
     "panel-closed"
 ];
@@ -220,46 +225,79 @@ impl Reve {
         .detach();
     }
 
-    // What the command palette offers on this screen, worded for how things stand.
-    fn commands(&self, cx: &App) -> Vec<commands::Entry> {
-        let mut commands = Vec::new();
+    // What the command palette offers on this screen, worded for how things stand. Glyphs
+    // take the header tools' ink; the appearance glyph keeps its hue.
+    fn commands(&self, window: &Window, cx: &App) -> Vec<Section> {
+        let ink = cx.theme().foreground.opacity(0.64);
+        let glyph = |name| icon(name, menu::GLYPH).text_color(ink);
+        let command = |icon, label, action| commands::row(icon, label, action, window, cx);
+        let (mut navigate, mut view, mut reve) = (Vec::new(), Vec::new(), Vec::new());
         match &self.screen {
-            Screen::Empty(_) => commands.push(("Open binary", OpenBinary.boxed_clone())),
+            Screen::Empty(_) => reve.push(command(
+                glyph("folder-simple-duotone"),
+                "Open binary",
+                Box::new(OpenBinary),
+            )),
             Screen::Open(_) => {
                 if self.listing().is_some() {
-                    commands.extend([
-                        ("Go to address or symbol", GoTo.boxed_clone()),
-                        ("Go back", GoBack.boxed_clone()),
-                        ("Go forward", GoForward.boxed_clone()),
-                    ]);
+                    navigate = vec![
+                        command(
+                            glyph("magnifying-glass"),
+                            "Go to address or symbol",
+                            Box::new(GoTo),
+                        ),
+                        command(glyph("caret-left"), "Go back", Box::new(GoBack)),
+                        command(glyph("caret-right"), "Go forward", Box::new(GoForward)),
+                    ];
                 }
                 let header = self.header.read(cx);
-                commands.extend([
-                    (
+                view.extend([
+                    command(
+                        header::sidebar_glyph(header.sidebar_open, menu::GLYPH).text_color(ink),
                         header::sidebar_label(header.sidebar_open),
-                        ToggleSidebar.boxed_clone(),
+                        Box::new(ToggleSidebar),
                     ),
-                    (
+                    command(
+                        header::bottom_glyph(header.bottom_open, menu::GLYPH).text_color(ink),
                         header::bottom_label(header.bottom_open),
-                        ToggleBottom.boxed_clone(),
+                        Box::new(ToggleBottom),
                     ),
                 ]);
             }
         }
+        let dark = cx.theme().mode.is_dark();
         let stats = if self.hud.is_some() {
             "Hide frame stats"
         } else {
             "Show frame stats"
         };
-        commands.extend([
-            (
-                header::appearance_label(cx.theme().mode.is_dark()),
-                ToggleAppearance.boxed_clone(),
+        view.extend([
+            command(
+                header::appearance_glyph(dark, menu::GLYPH),
+                header::appearance_label(dark),
+                Box::new(ToggleAppearance),
             ),
-            (stats, ToggleFrameStats.boxed_clone()),
-            ("Quit rêve", Quit.boxed_clone()),
+            command(glyph("gauge-duotone"), stats, Box::new(ToggleFrameStats)),
         ]);
-        commands
+        reve.push(command(
+            glyph("sign-out-duotone"),
+            "Quit rêve",
+            Box::new(Quit),
+        ));
+        vec![
+            Section {
+                heading: "Navigate",
+                rows: navigate,
+            },
+            Section {
+                heading: "View",
+                rows: view,
+            },
+            Section {
+                heading: "rêve",
+                rows: reve,
+            },
+        ]
     }
 
     // The listing, once Ghidra is done with the binary.
@@ -338,7 +376,7 @@ impl Render for Reve {
             .size_full()
             .relative()
             .on_action(cx.listener(|this, _: &ShowCommands, window, cx| {
-                commands::open(this.commands(cx), window, cx)
+                commands::open(this.commands(window, cx), window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleFrameStats, _, cx| {
                 this.hud = match this.hud {
@@ -537,6 +575,7 @@ fn main() {
         // Set up gpui-kit (theme, components). Must run first.
         gpui_kit::init(cx);
         panes::listing::init(cx);
+        menu::init(cx);
 
         // Dark is warm greys from oklch(0.203 0.0032 17.4) up, not the kit's near-black.
         ThemeRegistry::global_mut(cx)
