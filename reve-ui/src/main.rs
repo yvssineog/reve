@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::tree::{TreeState, tree};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, Theme, ThemeRegistry, TitleBar, h_flex, v_flex,
 };
@@ -24,7 +23,8 @@ use palette::Palette;
 use panes::decompile::Decompile;
 use panes::functions::Functions;
 use panes::listing::Listing;
-use panes::{note, pane, symbols};
+use panes::symbols::Symbols;
+use panes::{note, pane};
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
 // plus the panel toggle glyphs.
@@ -117,15 +117,18 @@ struct Workspace {
 // Where Ghidra is with the binary.
 enum Analysis {
     Analyzing,
-    Done {
-        summary: SharedString,
-        symbols: Entity<TreeState>,
-        listing: Entity<Listing>,
-        decompile: Entity<Decompile>,
-        functions: Entity<Functions>,
-    },
+    Done(Panes),
     // Why, in one line.
     Failed(SharedString),
+}
+
+// The analyzed binary, pane by pane.
+struct Panes {
+    summary: SharedString,
+    symbols: Entity<Symbols>,
+    listing: Entity<Listing>,
+    decompile: Entity<Decompile>,
+    functions: Entity<Functions>,
 }
 
 impl Reve {
@@ -227,19 +230,19 @@ impl Reve {
                     program.functions.len()
                 );
                 let listing = cx.new(|cx| Listing::new(program, cx));
-                let symbols = cx.new(|cx| symbols::state(&listing, cx));
+                let symbols = cx.new(|cx| Symbols::new(listing.clone(), cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
                 let functions = cx.new(|cx| Functions::new(listing.clone(), cx));
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
-                Analysis::Done {
+                Analysis::Done(Panes {
                     summary: summary.into(),
                     symbols,
                     listing,
                     decompile,
                     functions,
-                }
+                })
             }
         };
         cx.notify();
@@ -261,33 +264,17 @@ impl Render for Reve {
         let header = header::header(self.sidebar_open, self.bottom_open, window, cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
-        let not_ready = || note("Not ready.", cx).into_any_element();
-        let (symbols, listing, decompile, functions, decompiled) = match &workspace.analysis {
-            Analysis::Done {
-                symbols,
-                listing,
-                decompile,
-                functions,
-                ..
-            } => (
-                // Inset so the selected row's rounded fill clears the pane edges.
-                tree(symbols, symbols::row(listing.clone()))
-                    .flex_1()
-                    .min_h_0()
-                    .px(px(6.))
-                    .into_any_element(),
-                listing.clone().into_any_element(),
-                decompile.clone().into_any_element(),
-                functions.clone().into_any_element(),
-                Some(decompile.read(cx).name()),
-            ),
-            _ => (not_ready(), not_ready(), not_ready(), not_ready(), None),
+        let (busy, status, panes) = match &workspace.analysis {
+            Analysis::Analyzing => (true, format!("Analyzing {}…", workspace.name).into(), None),
+            Analysis::Done(panes) => (false, panes.summary.clone(), Some(panes)),
+            Analysis::Failed(why) => (false, why.clone(), None),
         };
-        let (busy, status) = match &workspace.analysis {
-            Analysis::Analyzing => (true, format!("Analyzing {}…", workspace.name).into()),
-            Analysis::Done { summary, .. } => (false, summary.clone()),
-            Analysis::Failed(why) => (false, why.clone()),
+        // A pane's view, or a note until the analysis is done.
+        let body = |view: fn(&Panes) -> AnyView| match panes {
+            Some(panes) => view(panes).into_any_element(),
+            None => note("Not ready.", cx).into_any_element(),
         };
+        let decompiled = panes.map(|panes| panes.decompile.read(cx).name());
 
         // The Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
         let sidebar = resizable_panel()
@@ -304,7 +291,7 @@ impl Render for Reve {
                         "Symbol Tree",
                         Some(workspace.name.clone()),
                     )
-                    .child(symbols),
+                    .child(body(|panes| panes.symbols.clone().into())),
                 ),
             );
 
@@ -317,7 +304,7 @@ impl Render for Reve {
                         h_resizable("code")
                             .child(
                                 pane(theme, "cpu-duotone", palette.mnemonic, "Listing", None)
-                                    .child(listing),
+                                    .child(body(|panes| panes.listing.clone().into())),
                             )
                             .child(
                                 pane(
@@ -327,7 +314,7 @@ impl Render for Reve {
                                     "Decompile",
                                     decompiled,
                                 )
-                                .child(decompile),
+                                .child(body(|panes| panes.decompile.clone().into())),
                             ),
                     ),
                 )
@@ -337,7 +324,7 @@ impl Render for Reve {
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))
                         .fixed()
-                        .child(functions),
+                        .child(body(|panes| panes.functions.clone().into())),
                 ),
         );
 

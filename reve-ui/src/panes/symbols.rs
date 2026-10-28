@@ -1,5 +1,5 @@
 use gpui_kit::component::list::ListItem;
-use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState};
+use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState, tree};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -9,18 +9,45 @@ use super::listing::Listing;
 use crate::icon;
 use crate::palette::Palette;
 
-// The tree as it opens: functions shown, the one the listing cursor is in marked. The mark
-// follows the cursor from there.
-pub fn state(listing: &Entity<Listing>, cx: &mut Context<TreeState>) -> TreeState {
-    cx.observe(listing, |tree, listing, cx| {
-        mark(tree, listing.read(cx).function().entry, cx)
-    })
-    .detach();
-    let listing = listing.read(cx);
-    let (items, entry) = (items(listing.program()), listing.function().entry);
-    let mut tree = TreeState::new(cx).items(items);
-    mark(&mut tree, entry, cx);
-    tree
+// Every function by name, the one the listing cursor is in marked and in view.
+pub struct Symbols {
+    listing: Entity<Listing>,
+    tree: Entity<TreeState>,
+    _sync: Subscription,
+}
+
+impl Symbols {
+    // Opens with the functions shown and the listing cursor's marked, then follows the cursor.
+    pub fn new(listing: Entity<Listing>, cx: &mut Context<Self>) -> Self {
+        let (items, entry) = {
+            let listing = listing.read(cx);
+            (items(listing.program()), listing.function().entry)
+        };
+        let tree = cx.new(|cx| {
+            let mut tree = TreeState::new(cx).items(items);
+            mark(&mut tree, entry, cx);
+            tree
+        });
+        let sync = cx.observe(&listing, |this, listing, cx| {
+            let entry = listing.read(cx).function().entry;
+            this.tree.update(cx, |tree, cx| mark(tree, entry, cx));
+        });
+        Self {
+            listing,
+            tree,
+            _sync: sync,
+        }
+    }
+}
+
+impl Render for Symbols {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Inset so the selected row's rounded fill clears the pane edges.
+        tree(&self.tree, row(self.listing.clone()))
+            .flex_1()
+            .min_h_0()
+            .px(px(6.))
+    }
 }
 
 // Selects the function at `entry` and scrolls it into view, unless it already is.
@@ -53,7 +80,7 @@ fn id(entry: Address) -> String {
 }
 
 // Functions in their name's hue with their address. Pressing one takes every pane to it.
-pub fn row(
+fn row(
     listing: Entity<Listing>,
 ) -> impl Fn(usize, &TreeEntry, bool, &mut Window, &mut App) -> ListItem + 'static {
     move |ix, entry, selected, _, cx| {
