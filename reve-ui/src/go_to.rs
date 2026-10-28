@@ -1,12 +1,10 @@
-use std::cell::Cell;
-
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
-use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::component::{ActiveTheme as _, WindowExt as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use reve_model::{Address, Function};
 
+use crate::commands;
 use crate::palette::Palette;
 use crate::panes::listing::Listing;
 
@@ -37,21 +35,7 @@ pub fn open(listing: Entity<Listing>, window: &mut Window, cx: &mut App) {
         query: query.clone(),
         places: Vec::new(),
     });
-    // The dialog takes focus as it opens; hand it to the field once, not on every rebuild.
-    let opening = Cell::new(true);
-    window.open_dialog(cx, move |dialog, window, cx| {
-        if opening.replace(false) {
-            query.update(cx, |query, cx| query.focus(window, cx));
-        }
-        dialog
-            .w(px(440.))
-            .margin_top(px(72.))
-            .p_0()
-            .min_h_0()
-            .close_button(false)
-            .entrance(DialogEntrance::None)
-            .child(picker.clone())
-    });
+    commands::present(query, window, cx, move |_, _| picker.clone());
 }
 
 impl Picker {

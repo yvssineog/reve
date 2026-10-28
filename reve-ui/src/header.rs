@@ -41,21 +41,13 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
     let dark = cx.theme().mode.is_dark();
     let sidebar = command(
         tool("sidebar", panel(sidebar_open), cx),
-        if sidebar_open {
-            "Hide Project and Symbol Tree"
-        } else {
-            "Show Project and Symbol Tree"
-        },
+        sidebar_label(sidebar_open),
         ToggleSidebar,
     );
     // The sidebar glyph turned a quarter counterclockwise, so its panel sits at the bottom.
     let bottom = command(
         tool("bottom", panel(bottom_open).rotate(radians(-FRAC_PI_2)), cx),
-        if bottom_open {
-            "Hide windows"
-        } else {
-            "Show windows"
-        },
+        bottom_label(bottom_open),
         ToggleBottom,
     );
     // A yellow moon in the dark, a purple sun in the light.
@@ -66,11 +58,7 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
     };
     let appearance = command(
         tool("appearance", icon(glyph, GLYPH).text_color(hue), cx),
-        if dark {
-            "Switch to light mode"
-        } else {
-            "Switch to dark mode"
-        },
+        appearance_label(dark),
         ToggleAppearance,
     );
     let back = command(tool("back", icon("caret-left", GLYPH), cx), "Back", GoBack).disabled(!back);
@@ -100,6 +88,27 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
                 .justify_end()
                 .child(controls().child(appearance).child(bottom)),
         )
+}
+
+// What the toggles do from where they stand, worded alike in tooltips and the command palette.
+pub fn sidebar_label(open: bool) -> &'static str {
+    if open {
+        "Hide Project and Symbol Tree"
+    } else {
+        "Show Project and Symbol Tree"
+    }
+}
+
+pub fn bottom_label(open: bool) -> &'static str {
+    if open { "Hide windows" } else { "Show windows" }
+}
+
+pub fn appearance_label(dark: bool) -> &'static str {
+    if dark {
+        "Switch to light mode"
+    } else {
+        "Switch to dark mode"
+    }
 }
 
 // A 28px icon button: dim at rest, a faint backdrop under the pointer.

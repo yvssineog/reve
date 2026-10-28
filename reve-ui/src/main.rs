@@ -1,3 +1,4 @@
+mod commands;
 mod empty;
 mod go_to;
 mod header;
@@ -94,7 +95,8 @@ actions!(
         ToggleFrameStats,
         GoTo,
         GoBack,
-        GoForward
+        GoForward,
+        ShowCommands
     ]
 );
 
@@ -219,6 +221,48 @@ impl Reve {
         .detach();
     }
 
+    // What the command palette offers on this screen, worded for how things stand.
+    fn commands(&self, cx: &App) -> Vec<commands::Entry> {
+        let mut commands = Vec::new();
+        match &self.screen {
+            Screen::Empty(_) => commands.push(("Open binary", OpenBinary.boxed_clone())),
+            Screen::Open(_) => {
+                if self.listing().is_some() {
+                    commands.extend([
+                        ("Go to address or symbol", GoTo.boxed_clone()),
+                        ("Go back", GoBack.boxed_clone()),
+                        ("Go forward", GoForward.boxed_clone()),
+                    ]);
+                }
+                let header = self.header.read(cx);
+                commands.extend([
+                    (
+                        header::sidebar_label(header.sidebar_open),
+                        ToggleSidebar.boxed_clone(),
+                    ),
+                    (
+                        header::bottom_label(header.bottom_open),
+                        ToggleBottom.boxed_clone(),
+                    ),
+                ]);
+            }
+        }
+        let stats = if self.hud.is_some() {
+            "Hide frame stats"
+        } else {
+            "Show frame stats"
+        };
+        commands.extend([
+            (
+                header::appearance_label(cx.theme().mode.is_dark()),
+                ToggleAppearance.boxed_clone(),
+            ),
+            (stats, ToggleFrameStats.boxed_clone()),
+            ("Quit rêve", Quit.boxed_clone()),
+        ]);
+        commands
+    }
+
     // The listing, once Ghidra is done with the binary.
     fn listing(&self) -> Option<Entity<Listing>> {
         match &self.screen {
@@ -300,6 +344,9 @@ impl Render for Reve {
         div()
             .size_full()
             .relative()
+            .on_action(cx.listener(|this, _: &ShowCommands, window, cx| {
+                commands::open(this.commands(cx), window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleFrameStats, _, cx| {
                 this.hud = match this.hud {
                     Some(_) => None,
@@ -494,6 +541,7 @@ fn main() {
             key("secondary-alt-p", ToggleFrameStats, cx),
             key("secondary-[", GoBack, cx),
             key("secondary-]", GoForward, cx),
+            key("secondary-k", ShowCommands, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
             KeyBinding::new("g", GoTo, Some(WORKSPACE)),
         ];
