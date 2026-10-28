@@ -80,7 +80,8 @@ impl GhidraAdapter {
         let program = export::read_export(&export_path)?;
         if let Some(saved) = &saved {
             // Saving is best-effort: a cache failure must not fail an
-            // analysis that succeeded.
+            // analysis that succeeded. The job directory's name is unique, so
+            // concurrent saves of one binary never share a temporary file.
             let temporary = saved.with_extension(job.path().file_name().unwrap_or_default());
             if save_export(&export_path, saved, &temporary).is_err() {
                 let _ = fs::remove_file(&temporary);
@@ -89,40 +90,37 @@ impl GhidraAdapter {
         Ok(program)
     }
 
-    /// Where the saved export for `input` lives, keyed by the binary's bytes,
-    /// the exporter, the schema and the Ghidra version. `None` when saved
-    /// analyses are disabled or the input can't be read.
+    /// Where the saved export for `input` lives, keyed by the binary's name
+    /// (Ghidra names the program after the file) and bytes, the exporter, the
+    /// schema and the Ghidra version. `None` when saved analyses are disabled,
+    /// the input can't be read, or the version is unknown, since a Ghidra
+    /// upgrade would then load stale entries.
     fn saved_export(&self, input: &Path) -> Option<PathBuf> {
         let cache_dir = self.config.cache_dir.as_ref()?;
+        let version = ghidra_version(&self.config.analyze_headless)?;
         let mut binary = Sha256::new();
         io::copy(&mut fs::File::open(input).ok()?, &mut binary).ok()?;
         let key = Sha256::new()
+            .chain_update(Sha256::digest(input.file_name()?.as_encoded_bytes()))
             .chain_update(binary.finalize())
             .chain_update(Sha256::digest(EXPORT_SCRIPT))
             .chain_update(Sha256::digest(SCHEMA))
-            .chain_update(ghidra_version(&self.config.analyze_headless))
+            .chain_update(version)
             .finalize();
         Some(cache_dir.join(format!("{key:x}.pb")))
     }
 }
 
-/// `application.version` of the Ghidra install that owns the launcher, or an
-/// empty string when it can't be read.
-fn ghidra_version(analyze_headless: &Path) -> String {
-    let launcher = fs::canonicalize(analyze_headless).unwrap_or(analyze_headless.to_path_buf());
-    launcher
-        .parent()
-        .and_then(Path::parent)
-        .and_then(|install| {
-            fs::read_to_string(install.join("Ghidra").join("application.properties")).ok()
-        })
-        .and_then(|properties| {
-            properties
-                .lines()
-                .find_map(|line| line.strip_prefix("application.version="))
-                .map(str::to_owned)
-        })
-        .unwrap_or_default()
+/// `application.version` of the Ghidra install that owns the launcher.
+fn ghidra_version(analyze_headless: &Path) -> Option<String> {
+    let launcher = fs::canonicalize(analyze_headless).ok()?;
+    let install = launcher.parent()?.parent()?;
+    let properties =
+        fs::read_to_string(install.join("Ghidra").join("application.properties")).ok()?;
+    properties
+        .lines()
+        .find_map(|line| line.strip_prefix("application.version="))
+        .map(str::to_owned)
 }
 
 /// Copy a fresh export to `saved` through `temporary` in the same directory,
@@ -150,7 +148,15 @@ mod tests {
 
     fn setup(mode: &str) -> (TempDirectory, GhidraConfig, PathBuf) {
         let temp = TempDirectory::new(&format!("orchestrator-{mode}")).unwrap();
-        let launcher = fake_headless(temp.path(), "fake headless", mode).unwrap();
+        let install = temp.path().join("fake Ghidra");
+        fs::create_dir_all(install.join("support")).unwrap();
+        fs::create_dir_all(install.join("Ghidra")).unwrap();
+        fs::write(
+            install.join("Ghidra").join("application.properties"),
+            "application.version=test\n",
+        )
+        .unwrap();
+        let launcher = fake_headless(&install.join("support"), "fake headless", mode).unwrap();
         let input = temp.path().join("input binary with spaces.elf");
         fs::write(&input, b"fake ELF input").unwrap();
         let projects = temp.path().join("projects with spaces");
@@ -191,10 +197,11 @@ mod tests {
 
     #[test]
     fn analyze_reuses_the_saved_analysis_until_the_input_changes() {
-        let (temp, config, input) = setup("write");
+        let (_temp, config, input) = setup("write");
+        let launches_log = config.analyze_headless.with_file_name("launches");
         let adapter = GhidraAdapter::new(config);
         let launches = || {
-            fs::read_to_string(temp.path().join("launches"))
+            fs::read_to_string(&launches_log)
                 .unwrap_or_default()
                 .lines()
                 .count()
@@ -298,7 +305,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn analyze_timeout_kills_processes_the_launcher_started() {
-        let (temp, config, input) = setup("timeout");
+        let (_temp, config, input) = setup("timeout");
+        let pid_file = config.analyze_headless.with_file_name("launcher-child.pid");
         // macOS can take about a second to first exec a freshly written
         // script, and the fake must record its child's pid before the kill.
         let adapter = GhidraAdapter::new(config.with_timeout(Duration::from_secs(2)));
@@ -308,7 +316,7 @@ mod tests {
             Err(ParserError::TimedOut(_))
         ));
 
-        let pid = fs::read_to_string(temp.path().join("launcher-child.pid"))
+        let pid = fs::read_to_string(pid_file)
             .expect("fake launcher started its child before the timeout");
         let ps = std::process::Command::new("ps")
             .args(["-o", "stat=", "-p", pid.trim()])
