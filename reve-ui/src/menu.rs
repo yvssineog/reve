@@ -247,18 +247,18 @@ impl Render for CommandMenu {
             )
             .on_action(cx.listener(Self::cancel))
             .child(
+                // Glyph and query line up with the rows' glyphs and labels, Esc with their notes.
                 h_flex()
-                    .h(px(52.))
-                    .pl(px(16.))
-                    .pr(px(12.))
-                    .gap(px(12.))
-                    .child(icon("magnifying-glass", px(18.)).text_color(palette.fg_3))
+                    .h(px(44.))
+                    .px(px(16.))
+                    .gap(px(10.))
+                    .child(icon("magnifying-glass", GLYPH).text_color(palette.fg_3))
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(&self.query)
                                 .appearance(false)
                                 .p_0()
-                                .text_size(px(15.)),
+                                .text_size(px(14.)),
                         ),
                     )
                     .child(key_badge("Esc", cx)),
