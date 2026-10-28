@@ -104,8 +104,7 @@ impl Render for Functions {
         let column = |width, label| div().flex_none().w(width).child(label);
 
         v_flex()
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .child(
                 h_flex()
                     .flex_none()
@@ -123,6 +122,8 @@ impl Render for Functions {
             )
             .child(
                 monospace(cx)
+                    .flex_1()
+                    .min_h_0()
                     .text_color(palette.fg)
                     .child(
                         uniform_list(

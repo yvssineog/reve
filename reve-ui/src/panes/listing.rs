@@ -283,6 +283,7 @@ impl Focusable for Listing {
 impl Render for Listing {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         monospace(cx)
+            .size_full()
             .key_context(CONTEXT)
             // A press anywhere in the listing focuses it.
             .track_focus(&self.focus)

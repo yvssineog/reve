@@ -44,8 +44,7 @@ impl Render for Symbols {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // Inset so the selected row's rounded fill clears the pane edges.
         tree(&self.tree, row(self.listing.clone()))
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .px(px(6.))
     }
 }

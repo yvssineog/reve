@@ -269,9 +269,12 @@ impl Render for Reve {
             Analysis::Done(panes) => (false, panes.summary.clone(), Some(panes)),
             Analysis::Failed(why) => (false, why.clone(), None),
         };
-        // A pane's view, or a note until the analysis is done.
+        // A pane's view under its header, or a note until the analysis is done. Each view is
+        // cached, so a frame redraws only the panes that changed.
         let body = |view: fn(&Panes) -> AnyView| match panes {
-            Some(panes) => view(panes).into_any_element(),
+            Some(panes) => view(panes)
+                .cached(StyleRefinement::default().flex_1().min_h_0().w_full())
+                .into_any_element(),
             None => note("Not ready.", cx).into_any_element(),
         };
         let decompiled = panes.map(|panes| panes.decompile.read(cx).name());

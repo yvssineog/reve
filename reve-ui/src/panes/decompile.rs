@@ -129,12 +129,13 @@ impl Render for Decompile {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = match &self.code {
             Ok(lines) => lines,
-            Err(why) => return note(why.clone(), cx).into_any_element(),
+            Err(why) => return note(why.clone(), cx).size_full().into_any_element(),
         };
         // The list is as wide as its longest line, so it scrolls sideways to that line's end.
         let longest = (0..lines.len()).max_by_key(|&ix| lines[ix].text.len());
 
         monospace(cx)
+            .size_full()
             .whitespace_nowrap()
             .text_color(Palette::of(cx).fg)
             .child(

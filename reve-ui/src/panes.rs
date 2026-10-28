@@ -56,11 +56,9 @@ pub fn note(text: impl Into<SharedString>, cx: &App) -> Div {
         .child(text.into())
 }
 
-// The body of a pane that shows code: 12px monospace on the listing's rows.
+// Text for code: 12px monospace on the listing's rows.
 pub fn monospace(cx: &App) -> Div {
     div()
-        .flex_1()
-        .min_h_0()
         .font_family(cx.theme().mono_font_family.clone())
         .text_size(px(12.))
         .line_height(listing::ROW)
