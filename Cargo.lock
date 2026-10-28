@@ -5373,10 +5373,12 @@ dependencies = [
 name = "reve-ghidra-adapter"
 version = "0.1.0"
 dependencies = [
+ "dirs 6.0.0",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
  "reve-model",
+ "sha2 0.10.9",
 ]
 
 [[package]]

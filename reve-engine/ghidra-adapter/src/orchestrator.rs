@@ -1,12 +1,27 @@
 //! High-level operation that runs Ghidra and returns the shared Rust model.
 
-use std::{fs, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use reve_model::Program;
+use sha2::{Digest, Sha256};
 
 use crate::{
     config::GhidraConfig, error::ParserError, export, headless::run_headless, job::JobDirectory,
 };
+
+/// The exporter and schema that shape a saved analysis; editing either
+/// changes every cache key, so old entries are never loaded.
+const EXPORT_SCRIPT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/ghidra-extension/ghidra_scripts/Export.java"
+));
+const SCHEMA: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../proto/engine.proto"
+));
 
 /// Coordinates one complete Ghidra analysis and protobuf import.
 #[derive(Clone, Debug)]
@@ -24,10 +39,11 @@ impl GhidraAdapter {
 
     /// Analyze an input binary and return the shared `reve_model::Program`.
     ///
-    /// The analysis uses a unique temporary Ghidra project directory. Ghidra
-    /// imports and analyzes the input, then `Export.java` writes a protobuf
-    /// message there. Rust decodes that message before the temporary directory
-    /// is removed.
+    /// A binary analyzed before loads from its saved export without running
+    /// Ghidra. Otherwise the analysis uses a unique temporary Ghidra project
+    /// directory. Ghidra imports and analyzes the input, then `Export.java`
+    /// writes a protobuf message there. Rust decodes that message and saves a
+    /// copy before the temporary directory is removed.
     pub fn analyze(&self, input: impl AsRef<Path>) -> Result<Program, ParserError> {
         self.config.validate()?;
 
@@ -40,6 +56,16 @@ impl GhidraAdapter {
 
         let input =
             fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+        let saved = self.saved_export(&input);
+        if let Some(saved) = &saved
+            && saved.is_file()
+        {
+            if let Ok(program) = export::read_export(saved) {
+                return Ok(program);
+            }
+            let _ = fs::remove_file(saved);
+        }
+
         let job = JobDirectory::create(&self.config.projects_dir)?;
         let export_path = job.export_path();
 
@@ -51,8 +77,64 @@ impl GhidraAdapter {
             return Err(ParserError::ExportMissing(export_path));
         }
 
-        export::read_export(&export_path).map_err(ParserError::from)
+        let program = export::read_export(&export_path)?;
+        if let Some(saved) = &saved {
+            // Saving is best-effort: a cache failure must not fail an
+            // analysis that succeeded.
+            let temporary = saved.with_extension(job.path().file_name().unwrap_or_default());
+            if save_export(&export_path, saved, &temporary).is_err() {
+                let _ = fs::remove_file(&temporary);
+            }
+        }
+        Ok(program)
     }
+
+    /// Where the saved export for `input` lives, keyed by the binary's bytes,
+    /// the exporter, the schema and the Ghidra version. `None` when saved
+    /// analyses are disabled or the input can't be read.
+    fn saved_export(&self, input: &Path) -> Option<PathBuf> {
+        let cache_dir = self.config.cache_dir.as_ref()?;
+        let mut binary = Sha256::new();
+        io::copy(&mut fs::File::open(input).ok()?, &mut binary).ok()?;
+        let key = Sha256::new()
+            .chain_update(binary.finalize())
+            .chain_update(Sha256::digest(EXPORT_SCRIPT))
+            .chain_update(Sha256::digest(SCHEMA))
+            .chain_update(ghidra_version(&self.config.analyze_headless))
+            .finalize();
+        Some(cache_dir.join(format!("{key:x}.pb")))
+    }
+}
+
+/// `application.version` of the Ghidra install that owns the launcher, or an
+/// empty string when it can't be read.
+fn ghidra_version(analyze_headless: &Path) -> String {
+    let launcher = fs::canonicalize(analyze_headless).unwrap_or(analyze_headless.to_path_buf());
+    launcher
+        .parent()
+        .and_then(Path::parent)
+        .and_then(|install| {
+            fs::read_to_string(install.join("Ghidra").join("application.properties")).ok()
+        })
+        .and_then(|properties| {
+            properties
+                .lines()
+                .find_map(|line| line.strip_prefix("application.version="))
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// Copy a fresh export to `saved` through `temporary` in the same directory,
+/// so a crash or timeout never leaves a partial entry that a later run loads.
+fn save_export(export: &Path, saved: &Path, temporary: &Path) -> io::Result<()> {
+    if let Some(cache_dir) = saved.parent() {
+        fs::create_dir_all(cache_dir)?;
+    }
+    let mut file = fs::File::create(temporary)?;
+    io::copy(&mut fs::File::open(export)?, &mut file)?;
+    file.sync_all()?;
+    fs::rename(temporary, saved)
 }
 
 #[cfg(test)]
@@ -74,9 +156,12 @@ mod tests {
         let projects = temp.path().join("projects with spaces");
 
         let java_home = crate::test_support::fake_jdk(temp.path()).unwrap();
+        let cache = temp.path().join("cache");
         (
             temp,
-            GhidraConfig::new(launcher, projects).with_java_home(java_home),
+            GhidraConfig::new(launcher, projects)
+                .with_java_home(java_home)
+                .with_cache_dir(cache),
             input,
         )
     }
@@ -102,6 +187,30 @@ mod tests {
         assert_eq!(program.name, "demo");
         assert!(program.functions.is_empty());
         assert_projects_clean(&config);
+    }
+
+    #[test]
+    fn analyze_reuses_the_saved_analysis_until_the_input_changes() {
+        let (temp, config, input) = setup("write");
+        let adapter = GhidraAdapter::new(config);
+        let launches = || {
+            fs::read_to_string(temp.path().join("launches"))
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
+
+        assert_eq!(adapter.analyze(&input).unwrap().name, "demo");
+        assert_eq!(adapter.analyze(&input).unwrap().name, "demo");
+        assert_eq!(
+            launches(),
+            1,
+            "second analysis should load the saved export"
+        );
+
+        fs::write(&input, b"edited fake ELF input").unwrap();
+        adapter.analyze(&input).unwrap();
+        assert_eq!(launches(), 2, "edited input should run Ghidra again");
     }
 
     #[test]

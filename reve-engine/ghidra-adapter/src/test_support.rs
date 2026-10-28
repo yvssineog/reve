@@ -66,6 +66,7 @@ pub(crate) fn fake_jdk(directory: &Path) -> io::Result<PathBuf> {
 /// Create a fake `analyzeHeadless` launcher for an end-to-end adapter test.
 ///
 /// The `mode` is one of `write`, `missing`, `invalid`, `fail`, or `timeout`.
+/// Every launch appends a line to `launches` beside the script.
 pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Result<PathBuf> {
     let (extension, script) = if cfg!(windows) {
         let body = match mode {
@@ -87,7 +88,10 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
                 ));
             }
         };
-        ("bat", format!("@echo off\r\n{body}"))
+        (
+            "bat",
+            format!("@echo off\r\necho launch>>\"%~dp0launches\"\r\n{body}"),
+        )
     } else {
         let body = match mode {
             "write" => {
@@ -108,7 +112,10 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
                 ));
             }
         };
-        ("sh", format!("#!/bin/sh\n{body}"))
+        (
+            "sh",
+            format!("#!/bin/sh\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"),
+        )
     };
 
     let path = directory.join(format!("{name}.{extension}"));

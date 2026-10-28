@@ -25,16 +25,23 @@ pub struct GhidraConfig {
     pub projects_dir: PathBuf,
     /// Maximum time allowed for one Ghidra analysis.
     pub timeout: Duration,
+    /// Directory of saved analyses, one `<key>.pb` per analyzed binary.
+    ///
+    /// Defaults to `rêve/analyses` in the user's cache directory. `None`
+    /// disables saved analyses, so every analysis runs Ghidra.
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl GhidraConfig {
-    /// Create a configuration with the project-local JDK and a ten-minute timeout.
+    /// Create a configuration with the project-local JDK, a ten-minute timeout
+    /// and saved analyses in the user's cache directory.
     pub fn new(analyze_headless: impl Into<PathBuf>, projects_dir: impl Into<PathBuf>) -> Self {
         Self {
             analyze_headless: analyze_headless.into(),
             java_home: bundled(BUNDLED_JDK_RELATIVE_PATH),
             projects_dir: projects_dir.into(),
             timeout: Duration::from_secs(10 * 60),
+            cache_dir: dirs::cache_dir().map(|cache| cache.join("rêve").join("analyses")),
         }
     }
 
@@ -47,6 +54,12 @@ impl GhidraConfig {
     /// Override the default maximum analysis duration.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Override where saved analyses are read and written.
+    pub fn with_cache_dir(mut self, cache_dir: impl Into<PathBuf>) -> Self {
+        self.cache_dir = Some(cache_dir.into());
         self
     }
 

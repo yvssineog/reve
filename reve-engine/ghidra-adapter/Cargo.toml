@@ -6,7 +6,9 @@ publish = false
 
 [dependencies]
 reve-model = { path = "../model" }
+dirs = "6"
 prost = "0.14.4"
+sha2 = "0.10"
 
 [build-dependencies]
 prost-build = "0.14.4"
