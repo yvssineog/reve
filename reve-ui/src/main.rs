@@ -1,5 +1,6 @@
 mod empty;
 mod header;
+mod hud;
 mod logo;
 mod palette;
 mod panes;
@@ -19,6 +20,7 @@ use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
 use header::Header;
+use hud::Hud;
 use logo::Logo;
 use palette::Palette;
 use panes::decompile::Decompile;
@@ -87,7 +89,8 @@ actions!(
         OpenBinary,
         ToggleSidebar,
         ToggleBottom,
-        ToggleAppearance
+        ToggleAppearance,
+        ToggleFrameStats
     ]
 );
 
@@ -99,6 +102,8 @@ struct Reve {
     // Also holds which panels are open.
     header: Entity<Header>,
     screen: Screen,
+    // Frame stats on the top bar, when shown.
+    hud: Option<Hud>,
 }
 
 // The animated logo until a binary is open, then the workspace showing it. Opening one
@@ -144,6 +149,8 @@ impl Reve {
                 bottom_open: true,
             }),
             screen: Screen::Empty(cx.new(Logo::new)),
+            // Shown in debug builds; secondary-alt-p toggles them in any build.
+            hud: cfg!(debug_assertions).then(Hud::default),
         }
     }
 
@@ -254,6 +261,26 @@ impl Reve {
 
 impl Render for Reve {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Before the screen renders, so the frame's time covers it.
+        let hud = self.hud.as_mut().map(|hud| hud.frame(cx));
+        div()
+            .size_full()
+            .relative()
+            .on_action(cx.listener(|this, _: &ToggleFrameStats, _, cx| {
+                this.hud = match this.hud {
+                    Some(_) => None,
+                    None => Some(Hud::default()),
+                };
+                cx.notify();
+            }))
+            .child(self.screen(cx))
+            .children(hud)
+    }
+}
+
+impl Reve {
+    // The empty screen until a binary is open, then the workspace.
+    fn screen(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let workspace = match &self.screen {
             Screen::Empty(logo) => {
                 return empty::screen(logo.clone(), cx)
@@ -413,6 +440,7 @@ fn main() {
             key("secondary-q", Quit, cx),
             key("secondary-b", ToggleSidebar, cx),
             key("secondary-j", ToggleBottom, cx),
+            key("secondary-alt-p", ToggleFrameStats, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
         ];
         cx.bind_keys(keys);
