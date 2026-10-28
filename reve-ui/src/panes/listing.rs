@@ -3,11 +3,11 @@ use std::ops::Range;
 
 use gpui_kit::base::actions::{Confirm, SelectDown, SelectPageDown, SelectPageUp, SelectUp};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{StyledExt as _, h_flex};
 use gpui_kit::*;
 use reve_model::{Address, Function, Instruction, Program};
 
+use super::{cell, monospace, pressable};
 use crate::palette::Palette;
 
 // The key context the listing binds its shortcuts under.
@@ -198,26 +198,30 @@ impl Listing {
                 .w_full()
                 .child(div().flex_1().h_px().bg(palette.hairline))
                 .into_any_element(),
-            Row::Label(function, xrefs) => {
-                header(h_flex().w_full().h(ROW).px(GUTTER), self.address_width())
-                    .gap_4()
-                    .child(
-                        div()
-                            .flex_none()
-                            .font_semibold()
-                            .text_color(palette.symbol)
-                            .child(self.program.functions[*function].name.clone()),
-                    )
-                    .children(xrefs.clone().map(|xrefs| {
-                        div()
-                            .ml_auto()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(palette.fg_4)
-                            .child(xrefs)
-                    }))
-                    .into_any_element()
-            }
+            // Started on the mnemonic column and cut with an ellipsis.
+            Row::Label(function, xrefs) => h_flex()
+                .w_full()
+                .h(ROW)
+                .pl(GUTTER + self.address_width() + BYTES)
+                .pr(GUTTER)
+                .truncate()
+                .gap_4()
+                .child(
+                    div()
+                        .flex_none()
+                        .font_semibold()
+                        .text_color(palette.symbol)
+                        .child(self.program.functions[*function].name.clone()),
+                )
+                .children(xrefs.clone().map(|xrefs| {
+                    div()
+                        .ml_auto()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(palette.fg_4)
+                        .child(xrefs)
+                }))
+                .into_any_element(),
             Row::Code(function, instruction) => {
                 let instruction = &self.program.functions[*function].instructions[*instruction];
                 self.instruction(ix, instruction, palette, cx)
@@ -243,18 +247,8 @@ impl Listing {
             .map(|byte| format!("{byte:02x}"))
             .collect();
 
-        h_flex()
-            .id(ix)
-            .w_full()
-            .h(ROW)
-            .px(GUTTER)
-            .map(|row| {
-                if ix == self.cursor {
-                    row.bg(palette.cursor)
-                } else {
-                    row.hover(|row| row.bg(palette.fg.opacity(0.04)))
-                }
-            })
+        let row = h_flex().id(ix).w_full().h(ROW).px(GUTTER);
+        pressable(row, ix == self.cursor, palette)
             .child(cell(
                 self.address_width(),
                 hex(instruction.address, self.digits),
@@ -288,7 +282,7 @@ impl Focusable for Listing {
 
 impl Render for Listing {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        monospace(cx)
             .key_context(CONTEXT)
             // A press anywhere in the listing focuses it.
             .track_focus(&self.focus)
@@ -299,11 +293,6 @@ impl Render for Listing {
             .on_action(cx.listener(|this, _: &HalfPageDown, _, cx| this.half_page(1, cx)))
             .on_action(cx.listener(|this, _: &HalfPageUp, _, cx| this.half_page(-1, cx)))
             .on_action(cx.listener(|this, _: &Confirm, _, cx| this.follow(cx)))
-            .flex_1()
-            .min_h_0()
-            .font_family(cx.theme().mono_font_family.clone())
-            .text_size(px(12.))
-            .line_height(px(18.))
             .child(
                 uniform_list(
                     "listing",
@@ -382,11 +371,6 @@ fn row_at(addresses: &[(Address, usize)], address: Address) -> Option<usize> {
     Some(addresses[at].1)
 }
 
-// A header row's text, started on the mnemonic column and cut with an ellipsis.
-fn header(row: Div, address_width: Pixels) -> Div {
-    row.pl(GUTTER + address_width + BYTES).truncate()
-}
-
 // Hex digits for the program's highest instruction address, at least 8.
 fn digits(program: &Program) -> usize {
     let instructions = program.functions.iter().flat_map(|f| &f.instructions);
@@ -397,16 +381,6 @@ fn digits(program: &Program) -> usize {
 // `address` in hex, zero-padded to `digits`.
 fn hex(address: Address, digits: usize) -> String {
     format!("{:0digits$x}", address.0)
-}
-
-// A fixed-width column on one line, its text cut with an ellipsis at the edge.
-fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
-    div()
-        .flex_none()
-        .w(width)
-        .truncate()
-        .text_color(hue)
-        .child(text.into())
 }
 
 #[cfg(test)]

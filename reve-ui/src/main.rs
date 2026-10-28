@@ -12,7 +12,7 @@ use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tree::{TreeState, tree};
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, Theme, ThemeRegistry, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Icon, Sizable as _, Theme, ThemeRegistry, TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -69,6 +69,13 @@ impl AssetSource for AppAssets {
         paths.extend(ICONS.iter().map(|(name, _)| SharedString::from(*name)));
         Ok(paths)
     }
+}
+
+// A bundled icon at `size`.
+fn icon(name: &str, size: Pixels) -> Icon {
+    Icon::empty()
+        .path(format!("icons/{name}.svg"))
+        .with_size(size)
 }
 
 // Commands that keyboard shortcuts, buttons and menus can trigger.
@@ -292,7 +299,7 @@ impl Render for Reve {
                 v_resizable("sidebar").child(
                     pane(
                         theme,
-                        "tree-structure",
+                        "tree-structure-duotone",
                         palette.symbol,
                         "Symbol Tree",
                         Some(workspace.name.clone()),
@@ -309,13 +316,13 @@ impl Render for Reve {
                     resizable_panel().child(
                         h_resizable("code")
                             .child(
-                                pane(theme, "cpu", palette.mnemonic, "Listing", None)
+                                pane(theme, "cpu-duotone", palette.mnemonic, "Listing", None)
                                     .child(listing),
                             )
                             .child(
                                 pane(
                                     theme,
-                                    "brackets-curly",
+                                    "brackets-curly-duotone",
                                     palette.string,
                                     "Decompile",
                                     decompiled,
@@ -325,7 +332,7 @@ impl Render for Reve {
                     ),
                 )
                 .child(
-                    pane(theme, "function", palette.symbol, "Functions", None)
+                    pane(theme, "function-duotone", palette.symbol, "Functions", None)
                         .visible(self.bottom_open)
                         .size(px(210.))
                         .size_range(px(120.)..px(480.))

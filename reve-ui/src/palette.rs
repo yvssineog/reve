@@ -9,6 +9,7 @@ pub struct Palette {
     pub fg_4: Hsla,
     pub hairline: Hsla,
     pub cursor: Hsla,
+    pub hover: Hsla,
     pub mnemonic: Hsla,
     pub symbol: Hsla,
     pub string: Hsla,
@@ -30,12 +31,14 @@ impl Palette {
         let hue = |on_dark, on_light, chroma, hue| {
             oklch(if dark { on_dark } else { on_light }, chroma, hue)
         };
+        let fg = ink.opacity(steps[0]);
         Self {
-            fg: ink.opacity(steps[0]),
+            fg,
             fg_3: ink.opacity(steps[1]),
             fg_4: ink.opacity(steps[2]),
             hairline: ink.opacity(steps[3]),
             cursor: oklch(0.682, 0.178, 246.6).opacity(0.2),
+            hover: fg.opacity(0.04),
             mnemonic: hue(0.768, 0.55, 0.121, 254.1),
             symbol: hue(0.784, 0.56, 0.127, 298.4),
             string: hue(0.794, 0.535, 0.15, 149.),
@@ -43,6 +46,16 @@ impl Palette {
             comment: hue(0.826, 0.55, 0.098, 86.3),
             // Electron's 0.136 chroma leaves sRGB at the light lightness.
             external: hue(0.805, 0.555, 0.13, 60.),
+        }
+    }
+
+    // A function name's hue. Ghidra calls the ones nobody has named yet `FUN_<address>`;
+    // those stay muted, so the color shows analysis progress.
+    pub fn name(&self, name: &str) -> Hsla {
+        if name.starts_with("FUN_") {
+            self.fg_3
+        } else {
+            self.symbol
         }
     }
 }

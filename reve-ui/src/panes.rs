@@ -3,21 +3,18 @@ pub mod functions;
 pub mod listing;
 pub mod symbols;
 
-use gpui_kit::component::list::ListItem;
 use gpui_kit::component::resizable::{ResizablePanel, resizable_panel};
-use gpui_kit::component::tree::TreeEntry;
-use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, Theme, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, StyledExt as _, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use crate::icon;
 use crate::palette::Palette;
 
 // A pane: a header row (Phosphor duotone icon in the pane's hue + title + optional detail)
 // over the caller's body.
 pub fn pane(
     theme: &Theme,
-    icon: &str,
+    glyph: &str,
     hue: Hsla,
     title: &'static str,
     detail: Option<SharedString>,
@@ -31,12 +28,7 @@ pub fn pane(
             .text_xs()
             .font_medium()
             .text_color(theme.muted_foreground)
-            .child(
-                Icon::empty()
-                    .path(format!("icons/{icon}-duotone.svg"))
-                    .with_size(px(14.))
-                    .text_color(hue),
-            )
+            .child(icon(glyph, px(14.)).text_color(hue))
             .child(title)
             // Detail reads quieter than the title, in the same font and size so baselines line up.
             .children(detail.map(|detail| {
@@ -64,58 +56,32 @@ pub fn note(text: impl Into<SharedString>, cx: &App) -> Div {
         .child(text.into())
 }
 
-// A compact tree row: indent, caret, icon in its hue, the label, then an optional detail on
-// the right. When narrow the label gives way first, cut with an ellipsis.
-fn tree_row(
-    ix: usize,
-    entry: &TreeEntry,
-    icon: &str,
-    hue: Hsla,
-    detail: Option<SharedString>,
-    cx: &App,
-) -> ListItem {
-    let theme = cx.theme();
-    let caret = match (entry.is_folder(), entry.is_expanded()) {
-        (false, _) => None,
-        (true, false) => Some("caret-right"),
-        (true, true) => Some("caret-down"),
-    };
+// The body of a pane that shows code: 12px monospace on the listing's rows.
+pub fn monospace(cx: &App) -> Div {
+    div()
+        .flex_1()
+        .min_h_0()
+        .font_family(cx.theme().mono_font_family.clone())
+        .text_size(px(12.))
+        .line_height(listing::ROW)
+}
 
-    ListItem::new(ix)
-        .h(px(24.))
-        .py_0()
-        .px(px(6.))
-        .rounded(px(6.))
-        .text_size(px(13.))
-        .child(
-            h_flex()
-                .gap_1()
-                .pl(px(16.) * entry.depth() as f32)
-                // Leaves keep an empty caret slot so their icons line up with folders'.
-                .child(div().flex_none().size(px(12.)).children(caret.map(|caret| {
-                    Icon::empty()
-                        .path(format!("icons/{caret}.svg"))
-                        .with_size(px(12.))
-                        .text_color(theme.muted_foreground)
-                })))
-                .child(
-                    Icon::empty()
-                        .path(format!("icons/{icon}.svg"))
-                        .with_size(px(14.))
-                        .text_color(hue),
-                )
-                .child(div().min_w_0().truncate().child(entry.item().label.clone()))
-                // Faint monospace at the label's size, so baselines line up. Never wraps or
-                // shrinks; the label gives way instead.
-                .children(detail.map(|detail| {
-                    div()
-                        .flex_none()
-                        .ml_auto()
-                        .pl_2()
-                        .whitespace_nowrap()
-                        .font_family(theme.mono_font_family.clone())
-                        .text_color(theme.muted_foreground.opacity(0.7))
-                        .child(detail)
-                })),
-        )
+// A row that takes presses: the cursor's fill when marked, a faint one under the pointer
+// otherwise.
+pub fn pressable(row: Stateful<Div>, marked: bool, palette: &Palette) -> Stateful<Div> {
+    if marked {
+        row.bg(palette.cursor)
+    } else {
+        row.hover(|row| row.bg(palette.hover))
+    }
+}
+
+// A fixed-width column on one line, its text cut with an ellipsis at the edge.
+pub fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
+    div()
+        .flex_none()
+        .w(width)
+        .truncate()
+        .text_color(hue)
+        .child(text.into())
 }

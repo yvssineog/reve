@@ -3,11 +3,15 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Placement, Sizable as _, TitleBar, h_flex, oklch,
+    ActiveTheme as _, Disableable as _, Icon, Placement, TitleBar, h_flex, oklch,
 };
 use gpui_kit::*;
 
-use crate::{ToggleAppearance, ToggleBottom, ToggleSidebar};
+use crate::{ToggleAppearance, ToggleBottom, ToggleSidebar, icon};
+
+pub const HEIGHT: Pixels = px(42.);
+// Header glyphs are 18px Phosphor icons.
+const GLYPH: Pixels = px(18.);
 
 // Left: sidebar toggle and history. Center: the "Go to" field. Right: light/dark
 // switch and windows toggle.
@@ -45,7 +49,7 @@ pub fn header(
         ("sun-duotone", oklch(0.56, 0.17, 298.4))
     };
     let appearance = command(
-        tool("appearance", icon(glyph).text_color(hue), cx),
+        tool("appearance", icon(glyph, GLYPH).text_color(hue), cx),
         if dark {
             "Switch to light mode"
         } else {
@@ -54,11 +58,11 @@ pub fn header(
         ToggleAppearance,
     );
     // Back and Forward stay disabled until there is history to walk.
-    let back = tool("back", icon("caret-left"), cx).disabled(true);
-    let forward = tool("forward", icon("caret-right"), cx).disabled(true);
+    let back = tool("back", icon("caret-left", GLYPH), cx).disabled(true);
+    let forward = tool("forward", icon("caret-right", GLYPH), cx).disabled(true);
 
     TitleBar::new()
-        .h(px(42.))
+        .h(HEIGHT)
         .px_1p5()
         .child(
             h_flex().flex_1().child(
@@ -104,16 +108,9 @@ fn command(button: Button, label: &'static str, action: impl Action + Clone) -> 
         .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
 }
 
-// An 18px Phosphor icon from the bundled set.
-fn icon(name: &str) -> Icon {
-    Icon::empty()
-        .path(format!("icons/{name}.svg"))
-        .with_size(px(18.))
-}
-
 // The panel toggle glyph: a rounded square with the panel cut out, wider when open.
 fn panel(open: bool) -> Icon {
-    icon(if open { "panel-open" } else { "panel-closed" })
+    icon(if open { "panel-open" } else { "panel-closed" }, GLYPH)
 }
 
 // The centered "Go to address or symbol" field. Its corners are concentric
@@ -140,7 +137,7 @@ fn go_to(window: &Window, cx: &App) -> Button {
                 .pl(px(9.))
                 .pr(px(5.))
                 .text_size(px(12.5))
-                .child(icon("magnifying-glass-bold").with_size(px(14.)))
+                .child(icon("magnifying-glass-bold", px(14.)))
                 .child("Go to address or symbol")
                 .child(key_badge("G", cx).ml_auto()),
         )

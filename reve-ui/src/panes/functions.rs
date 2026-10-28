@@ -1,12 +1,12 @@
 use std::ops::Range;
 
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use reve_model::{Address, Function};
 
 use super::listing::{GUTTER, Listing};
+use super::{cell, monospace, pressable};
 use crate::palette::Palette;
 
 // The height of every row.
@@ -64,35 +64,23 @@ impl Functions {
         &self,
         ix: usize,
         function: &Function,
+        listing: &Listing,
         palette: &Palette,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let listing = self.listing.read(cx);
         let entry = function.entry;
-        let name = if function.name.starts_with("FUN_") {
-            palette.fg_3
-        } else {
-            palette.symbol
-        };
         let signature = function
             .decompilation
             .as_ref()
             .map(|decompilation| decompilation.signature.clone())
             .unwrap_or_default();
-        h_flex()
-            .id(ix)
-            .w_full()
-            .h(ROW)
-            .px(GUTTER)
-            .gap_4()
-            .map(|row| {
-                if entry == self.current {
-                    row.bg(palette.cursor)
-                } else {
-                    row.hover(|row| row.bg(palette.fg.opacity(0.04)))
-                }
-            })
-            .child(cell(NAME, function.name.clone(), name))
+        let row = h_flex().id(ix).w_full().h(ROW).px(GUTTER).gap_4();
+        pressable(row, entry == self.current, palette)
+            .child(cell(
+                NAME,
+                function.name.clone(),
+                palette.name(&function.name),
+            ))
             .child(cell(
                 listing.address_width(),
                 listing.hex(entry),
@@ -134,12 +122,7 @@ impl Render for Functions {
                     .child(column(SIZE, "Size").text_right()),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(px(12.))
-                    .line_height(px(18.))
+                monospace(cx)
                     .text_color(palette.fg)
                     .child(
                         uniform_list(
@@ -147,9 +130,10 @@ impl Render for Functions {
                             count,
                             cx.processor(|this, range: Range<usize>, _, cx| {
                                 let palette = Palette::of(cx);
-                                let functions = &this.listing.read(cx).program().functions;
+                                let listing = this.listing.read(cx);
+                                let functions = &listing.program().functions;
                                 range
-                                    .map(|ix| this.row(ix, &functions[ix], &palette, cx))
+                                    .map(|ix| this.row(ix, &functions[ix], listing, &palette, cx))
                                     .collect()
                             }),
                         )
@@ -160,14 +144,4 @@ impl Render for Functions {
                     .vertical_scrollbar(&self.scroll),
             )
     }
-}
-
-// A fixed-width column, its text cut with an ellipsis at the edge.
-fn cell(width: Pixels, text: impl Into<SharedString>, hue: Hsla) -> Div {
-    div()
-        .flex_none()
-        .w(width)
-        .truncate()
-        .text_color(hue)
-        .child(text.into())
 }

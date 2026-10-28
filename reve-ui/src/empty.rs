@@ -4,7 +4,7 @@ use gpui_kit::component::{ActiveTheme as _, TitleBar, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::OpenBinary;
-use crate::header::key_badge;
+use crate::header::{self, key_badge};
 use crate::logo::Logo;
 use crate::palette::Palette;
 
@@ -22,7 +22,7 @@ pub fn screen(logo: Entity<Logo>, cx: &App) -> Div {
         .bg(theme.background)
         .child(
             TitleBar::new()
-                .h(px(42.))
+                .h(header::HEIGHT)
                 .bg(theme.background)
                 .border_color(transparent_black()),
         )
@@ -32,7 +32,7 @@ pub fn screen(logo: Entity<Logo>, cx: &App) -> Div {
                 .items_center()
                 .justify_center()
                 // Lifted by the title bar's height, so the logo centers on the window.
-                .pb(px(42.))
+                .pb(header::HEIGHT)
                 .child(logo),
         )
         .child(

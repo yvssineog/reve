@@ -1,13 +1,12 @@
 use std::ops::Range;
 
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use reve_model::{Address, Decompilation, DecompilationStatus, TokenKind};
 
 use super::listing::{GUTTER, Listing, ROW};
-use super::note;
+use super::{monospace, note, pressable};
 use crate::palette::Palette;
 
 // The function the listing cursor is in, as Ghidra decompiled it, with the lines the cursor's
@@ -135,12 +134,7 @@ impl Render for Decompile {
         // The list is as wide as its longest line, so it scrolls sideways to that line's end.
         let longest = (0..lines.len()).max_by_key(|&ix| lines[ix].text.len());
 
-        div()
-            .flex_1()
-            .min_h_0()
-            .font_family(cx.theme().mono_font_family.clone())
-            .text_size(px(12.))
-            .line_height(ROW)
+        monospace(cx)
             .whitespace_nowrap()
             .text_color(Palette::of(cx).fg)
             .child(
@@ -159,28 +153,19 @@ impl Render for Decompile {
                                 let text =
                                     StyledText::new(line.text.clone()).with_highlights(spans);
                                 // Lines that came from code take a press, like listing rows.
-                                let code = !line.addresses.is_empty();
                                 div()
                                     .id(ix)
                                     .h(ROW)
                                     .w_full()
                                     .px(GUTTER)
-                                    .map(|row| {
-                                        if line.holds(this.address) {
-                                            row.bg(palette.cursor)
-                                        } else if code {
-                                            row.hover(|row| row.bg(palette.fg.opacity(0.04)))
-                                        } else {
-                                            row
-                                        }
-                                    })
-                                    .when(code, |row| {
-                                        row.on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.pick(ix, window, cx)
-                                            }),
-                                        )
+                                    .when(!line.addresses.is_empty(), |row| {
+                                        pressable(row, line.holds(this.address), &palette)
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.pick(ix, window, cx)
+                                                }),
+                                            )
                                     })
                                     .child(text)
                                     .into_any_element()
