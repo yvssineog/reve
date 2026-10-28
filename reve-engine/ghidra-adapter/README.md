@@ -97,9 +97,9 @@ that directory when parsing finishes.
 Each decoded export is also saved in the user's cache directory
 (`~/Library/Caches/rêve/analyses/` on macOS). A binary analyzed before loads
 from there without running Ghidra. The key hashes the binary's name and bytes,
-`Export.java`, `engine.proto` and the Ghidra version, so changing the exporter
-or schema, or upgrading Ghidra, runs a fresh analysis. Delete that directory to
-force one.
+`Export.java`, `engine.proto`, the installed extension jar and the Ghidra
+version, so changing the exporter or schema, reinstalling the extension, or
+upgrading Ghidra runs a fresh analysis. Delete that directory to force one.
 
 Generated Java files, downloaded dependencies, Gradle caches, and the packaged
 extension are build artifacts; do not edit or commit them. The Rust adapter

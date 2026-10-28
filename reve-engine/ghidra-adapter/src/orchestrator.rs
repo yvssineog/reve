@@ -22,6 +22,9 @@ const SCHEMA: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../proto/engine.proto"
 ));
+/// The installed extension, relative to the Ghidra install. Ghidra writes the
+/// export with its protobuf classes, so a stale build changes the output too.
+const EXTENSION_JAR: &str = "Ghidra/Extensions/reve-ghidra-extension/lib/reve-ghidra-extension.jar";
 
 /// Coordinates one complete Ghidra analysis and protobuf import.
 #[derive(Clone, Debug)]
@@ -92,12 +95,16 @@ impl GhidraAdapter {
 
     /// Where the saved export for `input` lives, keyed by the binary's name
     /// (Ghidra names the program after the file) and bytes, the exporter, the
-    /// schema and the Ghidra version. `None` when saved analyses are disabled,
-    /// the input can't be read, or the version is unknown, since a Ghidra
-    /// upgrade would then load stale entries.
+    /// schema, the installed extension and the Ghidra version. `None` when
+    /// saved analyses are disabled, the input can't be read, or the version or
+    /// extension can't be found, since a Ghidra upgrade or extension rebuild
+    /// would then load stale entries.
     fn saved_export(&self, input: &Path) -> Option<PathBuf> {
         let cache_dir = self.config.cache_dir.as_ref()?;
-        let version = ghidra_version(&self.config.analyze_headless)?;
+        let launcher = fs::canonicalize(&self.config.analyze_headless).ok()?;
+        let install = launcher.parent()?.parent()?;
+        let version = ghidra_version(install)?;
+        let extension = fs::read(install.join(EXTENSION_JAR)).ok()?;
         let mut binary = Sha256::new();
         io::copy(&mut fs::File::open(input).ok()?, &mut binary).ok()?;
         let key = Sha256::new()
@@ -105,16 +112,15 @@ impl GhidraAdapter {
             .chain_update(binary.finalize())
             .chain_update(Sha256::digest(EXPORT_SCRIPT))
             .chain_update(Sha256::digest(SCHEMA))
+            .chain_update(Sha256::digest(extension))
             .chain_update(version)
             .finalize();
         Some(cache_dir.join(format!("{key:x}.pb")))
     }
 }
 
-/// `application.version` of the Ghidra install that owns the launcher.
-fn ghidra_version(analyze_headless: &Path) -> Option<String> {
-    let launcher = fs::canonicalize(analyze_headless).ok()?;
-    let install = launcher.parent()?.parent()?;
+/// `application.version` of the Ghidra install at `install`.
+fn ghidra_version(install: &Path) -> Option<String> {
     let properties =
         fs::read_to_string(install.join("Ghidra").join("application.properties")).ok()?;
     properties
@@ -150,12 +156,13 @@ mod tests {
         let temp = TempDirectory::new(&format!("orchestrator-{mode}")).unwrap();
         let install = temp.path().join("fake Ghidra");
         fs::create_dir_all(install.join("support")).unwrap();
-        fs::create_dir_all(install.join("Ghidra")).unwrap();
+        fs::create_dir_all(install.join(EXTENSION_JAR).parent().unwrap()).unwrap();
         fs::write(
             install.join("Ghidra").join("application.properties"),
             "application.version=test\n",
         )
         .unwrap();
+        fs::write(install.join(EXTENSION_JAR), b"fake extension").unwrap();
         let launcher = fake_headless(&install.join("support"), "fake headless", mode).unwrap();
         let input = temp.path().join("input binary with spaces.elf");
         fs::write(&input, b"fake ELF input").unwrap();
@@ -196,8 +203,8 @@ mod tests {
     }
 
     #[test]
-    fn analyze_reuses_the_saved_analysis_until_the_input_changes() {
-        let (_temp, config, input) = setup("write");
+    fn analyze_reuses_the_saved_analysis_until_the_binary_or_extension_changes() {
+        let (temp, config, input) = setup("write");
         let launches_log = config.analyze_headless.with_file_name("launches");
         let adapter = GhidraAdapter::new(config);
         let launches = || {
@@ -218,6 +225,11 @@ mod tests {
         fs::write(&input, b"edited fake ELF input").unwrap();
         adapter.analyze(&input).unwrap();
         assert_eq!(launches(), 2, "edited input should run Ghidra again");
+
+        let extension = temp.path().join("fake Ghidra").join(EXTENSION_JAR);
+        fs::write(extension, b"rebuilt fake extension").unwrap();
+        adapter.analyze(&input).unwrap();
+        assert_eq!(launches(), 3, "rebuilt extension should run Ghidra again");
     }
 
     #[test]
