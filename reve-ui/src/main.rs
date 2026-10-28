@@ -140,7 +140,6 @@ enum Analysis {
 
 // The analyzed binary, pane by pane.
 struct Panes {
-    summary: SharedString,
     symbols: Entity<Symbols>,
     listing: Entity<Listing>,
     decompile: Entity<Decompile>,
@@ -301,11 +300,6 @@ impl Reve {
                 Analysis::Failed(format!("Ghidra found no code in {name}").into())
             }
             Ok(program) => {
-                let summary = format!(
-                    "{name} · {} · {} functions",
-                    program.architecture,
-                    program.functions.len()
-                );
                 let listing = cx.new(|cx| Listing::new(program, cx));
                 let symbols = cx.new(|cx| Symbols::new(listing.clone(), cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
@@ -324,7 +318,6 @@ impl Reve {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
                 Analysis::Done(Panes {
-                    summary: summary.into(),
                     symbols,
                     listing,
                     decompile,
@@ -379,10 +372,9 @@ impl Reve {
         } = self.header.read(cx);
         let palette = Palette::of(cx);
         let theme = cx.theme();
-        let (busy, status, panes) = match &workspace.analysis {
-            Analysis::Analyzing => (true, format!("Analyzing {}…", workspace.name).into(), None),
-            Analysis::Done(panes) => (false, panes.summary.clone(), Some(panes)),
-            Analysis::Failed(why) => (false, why.clone(), None),
+        let panes = match &workspace.analysis {
+            Analysis::Done(panes) => Some(panes),
+            _ => None,
         };
         // A pane's view under its header, or a note until the analysis is done. Each view is
         // cached, so a frame redraws only the panes that changed.
@@ -393,6 +385,8 @@ impl Reve {
             None => note("Not ready.", cx).into_any_element(),
         };
         let decompiled = panes.map(|panes| panes.decompile.read(cx).name());
+        // Footer text that gives way first when the window is narrow.
+        let line = |text: SharedString| div().min_w_0().truncate().child(text);
 
         // The Symbol Tree, on the chrome tint. Keeps its width when the window resizes.
         let sidebar = resizable_panel()
@@ -504,10 +498,30 @@ impl Reve {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(palette.fg_3)
-                    .when(busy, |footer| {
-                        footer.child(Spinner::new().with_size(px(12.)).color(palette.fg_3))
-                    })
-                    .child(div().min_w_0().truncate().child(status)),
+                    .map(|footer| match &workspace.analysis {
+                        Analysis::Analyzing => footer
+                            .child(Spinner::new().with_size(px(12.)).color(palette.fg_3))
+                            .child(line(format!("Analyzing {}…", workspace.name).into())),
+                        // The binary, its architecture and its function count, each its own field.
+                        Analysis::Done(panes) => {
+                            let program = panes.listing.read(cx).program();
+                            footer
+                                .gap_4()
+                                .child(line(workspace.name.clone()))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .font_family(theme.mono_font_family.clone())
+                                        .child(program.architecture.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .child(format!("{} functions", program.functions.len())),
+                                )
+                        }
+                        Analysis::Failed(why) => footer.child(line(why.clone())),
+                    }),
             )
             .into_any_element()
     }
