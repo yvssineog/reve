@@ -1,6 +1,14 @@
-# rêve
+<p align="center">
+  <img src="reve-ui/assets/reve.svg" width="96" alt="">
+</p>
 
-Open-source reverse engineering application.
+<h1 align="center">rêve</h1>
+
+<p align="center">Open-source reverse engineering application.</p>
+
+<p align="center">
+  <img src=".github/screenshot.webp" alt="rêve with main open in the Symbol Tree, Listing, Decompile and Functions panes">
+</p>
 
 - `reve-engine/model/`: shared engine models.
 - `reve-engine/ghidra-adapter/`: runs headless Ghidra and decodes its export into those models.
