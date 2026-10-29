@@ -454,7 +454,14 @@ impl Reve {
         }
     }
 
-    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, _: &mut Context<Self>) {
+    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        let is_last_window = cx.windows().len() <= 1;
+        // The final window is removed as part of GPUI application shutdown.
+        if is_last_window {
+            self.cancel_analysis();
+            cx.quit();
+            return;
+        }
         window.remove_window();
     }
 
