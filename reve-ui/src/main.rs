@@ -98,7 +98,10 @@ actions!(
         Quit,
         OpenBinary,
         OpenBinaryInNewWindow,
+        OpenRecent,
+        ClearRecent,
         CloseBinary,
+        CloseWindow,
         ToggleSidebar,
         ToggleBottom,
         ToggleAppearance,
@@ -109,6 +112,19 @@ actions!(
         ShowCommands
     ]
 );
+
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = reve, no_json)]
+struct OpenRecentBinary {
+    path: PathBuf,
+    in_new_window: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = reve, no_json)]
+struct RemoveRecentBinary {
+    path: PathBuf,
+}
 
 // The open workspace's key context. Its one-letter shortcuts stop at dialogs over it, so
 // typing in them still types.
@@ -126,6 +142,8 @@ struct Reve {
     analysis_generation: u64,
     // Cancels Ghidra when this window's binary changes or the window is dropped.
     analysis_cancellation: Option<CancellationToken>,
+    // Redraws this window's home screen when another window changes recents.
+    _recent_files: Subscription,
     // Frame stats on the top bar, when shown.
     hud: Option<Hud>,
 }
@@ -169,6 +187,7 @@ impl Reve {
     fn new(window: &mut Window, cx: &mut Context<Self>, initial_binary: Option<PathBuf>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let recent_files = cx.observe_global::<RecentStore>(|_, cx| cx.notify());
         let mut this = Self {
             focus,
             header: cx.new(|_| Header {
@@ -180,6 +199,7 @@ impl Reve {
             screen: Screen::Empty(cx.new(Logo::new)),
             analysis_generation: 0,
             analysis_cancellation: None,
+            _recent_files: recent_files,
             // Shown in debug builds; secondary-alt-p toggles them in any build.
             hud: cfg!(debug_assertions).then(Hud::default),
         };
@@ -242,6 +262,124 @@ impl Reve {
         .detach();
     }
 
+    // Opens the searchable recent-file list from the File menu or command palette.
+    fn open_recent(&mut self, _: &OpenRecent, window: &mut Window, cx: &mut Context<Self>) {
+        let files = cx.global::<RecentStore>().entries();
+        if files.is_empty() {
+            return;
+        }
+
+        let ink = cx.theme().foreground.opacity(0.64);
+        let glyph = |name| icon(name, menu::GLYPH).text_color(ink);
+        let mut current_window = Vec::new();
+        let mut new_window = Vec::new();
+        let mut unavailable = Vec::new();
+        for file in files {
+            let parent = file
+                .path
+                .parent()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            let label = format!("{} — {}", file.name, parent);
+            if file.available {
+                current_window.push(commands::row(
+                    glyph("folder-simple-duotone"),
+                    format!("Open {label}"),
+                    Box::new(OpenRecentBinary {
+                        path: file.path.clone(),
+                        in_new_window: false,
+                    }),
+                    window,
+                    cx,
+                ));
+                new_window.push(commands::row(
+                    glyph("folder-simple-duotone"),
+                    format!("Open {label} in New Window"),
+                    Box::new(OpenRecentBinary {
+                        path: file.path,
+                        in_new_window: true,
+                    }),
+                    window,
+                    cx,
+                ));
+            } else {
+                unavailable.push(commands::row(
+                    glyph("folder-simple-duotone"),
+                    format!("Remove missing {label}"),
+                    Box::new(RemoveRecentBinary { path: file.path }),
+                    window,
+                    cx,
+                ));
+            }
+        }
+
+        commands::open(
+            vec![
+                Section {
+                    heading: "Open in this window",
+                    rows: current_window,
+                },
+                Section {
+                    heading: "Open in new window",
+                    rows: new_window,
+                },
+                Section {
+                    heading: "Unavailable",
+                    rows: unavailable,
+                },
+            ],
+            window,
+            cx,
+        );
+    }
+
+    // Opens a selected recent path in this window or a new one.
+    fn open_recent_binary(
+        &mut self,
+        action: &OpenRecentBinary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !action.path.is_file() {
+            eprintln!(
+                "recent binary is no longer available: {}",
+                action.path.display()
+            );
+            return;
+        }
+        if action.in_new_window {
+            if let Err(error) = crate::window::open(cx, Some(action.path.clone())) {
+                eprintln!("opening {} in a new window: {error}", action.path.display());
+            }
+        } else {
+            self.open(action.path.clone(), window, cx);
+        }
+    }
+
+    // Removes a recent path without affecting any currently open window.
+    fn remove_recent_binary(
+        &mut self,
+        action: &RemoveRecentBinary,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = cx.global_mut::<RecentStore>().remove(&action.path) {
+            eprintln!(
+                "could not remove recent binary {}: {error}",
+                action.path.display()
+            );
+        }
+        cx.notify();
+    }
+
+    // Clears the recent paths while leaving open windows alone.
+    fn clear_recent(&mut self, _: &ClearRecent, _: &mut Window, cx: &mut Context<Self>) {
+        if let Err(error) = cx.global_mut::<RecentStore>().clear() {
+            eprintln!("could not clear recent binaries: {error}");
+        }
+        cx.notify();
+    }
+
     // Shows `binary` and starts analyzing it.
     fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = cx.global_mut::<RecentStore>().record(&binary) {
@@ -256,6 +394,7 @@ impl Reve {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| binary.display().to_string()),
         );
+        window.set_window_title(name.as_ref());
         let path = binary.clone();
         let cancellation = CancellationToken::new();
         self.analysis_cancellation = Some(cancellation.clone());
@@ -298,10 +437,11 @@ impl Reve {
     }
 
     // Drops this window's binary panes and returns it to the home screen.
-    fn close_binary(&mut self, _: &CloseBinary, _: &mut Window, cx: &mut Context<Self>) {
+    fn close_binary(&mut self, _: &CloseBinary, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(&self.screen, Screen::Open(_)) {
             self.cancel_analysis();
             self.analysis_generation = self.analysis_generation.wrapping_add(1);
+            window.set_window_title("rêve");
             self.screen = Screen::Empty(cx.new(Logo::new));
             self.header.update(cx, |header, cx| {
                 header.sidebar_open = true;
@@ -314,20 +454,45 @@ impl Reve {
         }
     }
 
+    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, _: &mut Context<Self>) {
+        window.remove_window();
+    }
+
     // What the command palette offers on this screen, worded for how things stand. Glyphs
     // take the header tools' ink; the appearance glyph keeps its hue.
     fn commands(&self, window: &Window, cx: &App) -> Vec<Section> {
         let ink = cx.theme().foreground.opacity(0.64);
         let glyph = |name| icon(name, menu::GLYPH).text_color(ink);
         let command = |icon, label, action| commands::row(icon, label, action, window, cx);
-        let (mut navigate, mut view, mut reve) = (Vec::new(), Vec::new(), Vec::new());
-        match &self.screen {
-            Screen::Empty(_) => reve.push(command(
+        let (mut navigate, mut view, mut files, mut reve) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        files.extend([
+            command(
                 glyph("folder-simple-duotone"),
                 "Open binary",
                 Box::new(OpenBinary),
-            )),
+            ),
+            command(
+                glyph("folder-simple-duotone"),
+                "Open binary in new window",
+                Box::new(OpenBinaryInNewWindow),
+            ),
+        ]);
+        if !cx.global::<RecentStore>().entries().is_empty() {
+            files.push(command(
+                glyph("folder-simple-duotone"),
+                "Open recent",
+                Box::new(OpenRecent),
+            ));
+        }
+        match &self.screen {
+            Screen::Empty(_) => {}
             Screen::Open(_) => {
+                files.push(command(
+                    glyph("sign-out-duotone"),
+                    "Close binary",
+                    Box::new(CloseBinary),
+                ));
                 if self.listing().is_some() {
                     navigate = vec![
                         command(
@@ -373,10 +538,19 @@ impl Reve {
             "Quit rêve",
             Box::new(Quit),
         ));
+        reve.push(command(
+            glyph("sign-out-duotone"),
+            "Close window",
+            Box::new(CloseWindow),
+        ));
         vec![
             Section {
                 heading: "Navigate",
                 rows: navigate,
+            },
+            Section {
+                heading: "Files",
+                rows: files,
             },
             Section {
                 heading: "View",
@@ -489,23 +663,33 @@ impl Render for Reve {
                 };
                 cx.notify();
             }))
+            .on_action(cx.listener(Self::open_binary))
             .on_action(cx.listener(Self::open_binary_in_new_window))
+            .on_action(cx.listener(Self::open_recent))
+            .on_action(cx.listener(Self::open_recent_binary))
+            .on_action(cx.listener(Self::remove_recent_binary))
+            .on_action(cx.listener(Self::clear_recent))
             .on_action(cx.listener(Self::close_binary))
-            .child(self.screen(cx))
+            .on_action(cx.listener(Self::close_window))
+            .child(self.screen(window, cx))
             .children(hud)
     }
 }
 
 impl Reve {
     // The empty screen until a binary is open, then the workspace.
-    fn screen(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn screen(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let workspace = match &self.screen {
             Screen::Empty(logo) => {
-                return empty::screen(logo.clone(), cx)
-                    .track_focus(&self.focus)
-                    .key_context(empty::CONTEXT)
-                    .on_action(cx.listener(Self::open_binary))
-                    .into_any_element();
+                return empty::screen(
+                    logo.clone(),
+                    cx.global::<RecentStore>().entries(),
+                    window,
+                    cx,
+                )
+                .track_focus(&self.focus)
+                .key_context(empty::CONTEXT)
+                .into_any_element();
             }
             Screen::Open(workspace) => workspace,
         };
@@ -696,6 +880,8 @@ fn main() {
         // Keyboard shortcuts.
         let keys = [
             key("secondary-q", Quit, cx),
+            key("secondary-o", OpenBinary, cx),
+            key("secondary-w", CloseWindow, cx),
             key("secondary-b", ToggleSidebar, cx),
             key("secondary-j", ToggleBottom, cx),
             key("secondary-alt-p", ToggleFrameStats, cx),
@@ -709,6 +895,7 @@ fn main() {
 
         // Quit from the shortcut or the app menu.
         cx.on_action(|_: &Quit, cx| cx.quit());
+        // The custom title bar has its own visible File menu. Keep Quit in the native app menu.
         cx.set_menus([Menu::new("rêve").items([MenuItem::action("Quit rêve", Quit)])]);
 
         // Flips light/dark. On macOS this also re-themes the native parts, like the

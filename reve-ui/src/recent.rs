@@ -13,7 +13,6 @@ const SETTINGS_VERSION: u32 = 1;
 const MAX_RECENT_FILES: usize = 10;
 
 /// One path in the recent-file list, with presentation details computed on read.
-#[allow(dead_code)] // The home-screen list is added in phase 4.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecentFile {
     /// Canonical path when the selected file still exists.
@@ -56,7 +55,6 @@ impl RecentStore {
     }
 
     /// Return a snapshot suitable for displaying in the UI.
-    #[allow(dead_code)] // The home-screen list is added in phase 4.
     pub fn entries(&self) -> Vec<RecentFile> {
         self.paths
             .iter()
@@ -86,7 +84,6 @@ impl RecentStore {
     }
 
     /// Remove a path from the list, including entries whose file is missing.
-    #[allow(dead_code)] // The recent-list controls are added in phase 4.
     pub fn remove(&mut self, selected_path: impl AsRef<Path>) -> io::Result<()> {
         let selected_path = selected_path.as_ref();
         let path = fs::canonicalize(selected_path).unwrap_or_else(|_| selected_path.to_path_buf());
@@ -95,7 +92,6 @@ impl RecentStore {
     }
 
     /// Remove all recent binaries.
-    #[allow(dead_code)] // The recent-list controls are added in phase 4.
     pub fn clear(&mut self) -> io::Result<()> {
         self.paths.clear();
         self.persist()
