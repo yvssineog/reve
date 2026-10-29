@@ -71,11 +71,11 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
     let (extension, script) = if cfg!(windows) {
         let body = match mode {
             "write" => {
-                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%~7', [Convert]::FromBase64String('CgRkZW1v'))\"\r\necho fake stdout\r\necho fake stderr 1>&2\r\nexit /b 0\r\n"
+                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%last%', [Convert]::FromBase64String('CgRkZW1v'))\"\r\necho fake stdout\r\necho fake stderr 1>&2\r\nexit /b 0\r\n"
             }
             "missing" => "echo fake stdout\r\nexit /b 0\r\n",
             "invalid" => {
-                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%~7', [Convert]::FromBase64String('CgRk'))\"\r\nexit /b 0\r\n"
+                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%last%', [Convert]::FromBase64String('CgRk'))\"\r\nexit /b 0\r\n"
             }
             "fail" => "echo fake stdout\r\necho fake stderr 1>&2\r\nexit /b 23\r\n",
             "timeout" => {
@@ -90,7 +90,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         };
         (
             "bat",
-            format!("@echo off\r\necho launch>>\"%~dp0launches\"\r\n{body}"),
+            format!(
+                "@echo off\r\necho launch>>\"%~dp0launches\"\r\n:args\r\nif not \"%~1\"==\"\" (set \"last=%~1\" & shift & goto args)\r\n{body}"
+            ),
         )
     } else {
         let body = match mode {
