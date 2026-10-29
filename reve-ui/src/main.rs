@@ -20,7 +20,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use reve_ghidra_adapter::{GhidraAdapter, GhidraConfig, ParserError};
+use reve_ghidra_adapter::{CancellationToken, GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
 use header::Header;
@@ -120,6 +120,10 @@ struct Reve {
     // Also holds which panels are open.
     header: Entity<Header>,
     screen: Screen,
+    // Identifies the only analysis allowed to update this window.
+    analysis_generation: u64,
+    // Cancels Ghidra when this window's binary changes or the window is dropped.
+    analysis_cancellation: Option<CancellationToken>,
     // Frame stats on the top bar, when shown.
     hud: Option<Hud>,
 }
@@ -172,6 +176,8 @@ impl Reve {
                 forward: false,
             }),
             screen: Screen::Empty(cx.new(Logo::new)),
+            analysis_generation: 0,
+            analysis_cancellation: None,
             // Shown in debug builds; secondary-alt-p toggles them in any build.
             hud: cfg!(debug_assertions).then(Hud::default),
         };
@@ -236,10 +242,9 @@ impl Reve {
 
     // Shows `binary` and starts analyzing it.
     fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // One workspace, one analysis.
-        if let Screen::Open(_) = self.screen {
-            return;
-        }
+        self.cancel_analysis();
+        self.analysis_generation = self.analysis_generation.wrapping_add(1);
+        let generation = self.analysis_generation;
         let name = SharedString::from(
             binary
                 .file_name()
@@ -247,24 +252,40 @@ impl Reve {
                 .unwrap_or_else(|| binary.display().to_string()),
         );
         let path = binary.clone();
-        Self::analyze(binary, name.clone(), window, cx);
+        let cancellation = CancellationToken::new();
+        self.analysis_cancellation = Some(cancellation.clone());
         self.screen = Screen::Open(Workspace {
             path,
-            name,
+            name: name.clone(),
             analysis: Analysis::Analyzing,
         });
+        Self::analyze(binary, name, generation, cancellation, window, cx);
         cx.notify();
     }
 
+    fn cancel_analysis(&mut self) {
+        if let Some(cancellation) = self.analysis_cancellation.take() {
+            cancellation.cancel();
+        }
+    }
+
     // Runs Ghidra on `binary` off the main thread, then shows the result.
-    fn analyze(binary: PathBuf, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+    fn analyze(
+        binary: PathBuf,
+        name: SharedString,
+        generation: u64,
+        cancellation: CancellationToken,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let analysis = cx.background_spawn(async move {
-            GhidraAdapter::new(GhidraConfig::from_environment()).analyze(binary)
+            GhidraAdapter::new(GhidraConfig::from_environment())
+                .analyze_with_cancellation(binary, &cancellation)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = analysis.await;
             this.update_in(cx, |this, window, cx| {
-                this.analyzed(name, result, window, cx)
+                this.analyzed(generation, name, result, window, cx)
             })
             .ok();
         })
@@ -274,6 +295,8 @@ impl Reve {
     // Drops this window's binary panes and returns it to the home screen.
     fn close_binary(&mut self, _: &CloseBinary, _: &mut Window, cx: &mut Context<Self>) {
         if matches!(&self.screen, Screen::Open(_)) {
+            self.cancel_analysis();
+            self.analysis_generation = self.analysis_generation.wrapping_add(1);
             self.screen = Screen::Empty(cx.new(Logo::new));
             self.header.update(cx, |header, cx| {
                 header.sidebar_open = true;
@@ -376,11 +399,19 @@ impl Reve {
     // takes focus unless the user has already put it in a pane.
     fn analyzed(
         &mut self,
+        generation: u64,
         name: SharedString,
         result: Result<Program, ParserError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if generation != self.analysis_generation {
+            return;
+        }
+        self.analysis_cancellation = None;
+        if matches!(&result, Err(ParserError::Cancelled)) {
+            return;
+        }
         let Screen::Open(workspace) = &mut self.screen else {
             return;
         };
@@ -427,6 +458,12 @@ impl Reve {
             }
         };
         cx.notify();
+    }
+}
+
+impl Drop for Reve {
+    fn drop(&mut self) {
+        self.cancel_analysis();
     }
 }
 

@@ -9,7 +9,8 @@ use reve_model::Program;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    config::GhidraConfig, error::ParserError, export, headless::run_headless, job::JobDirectory,
+    CancellationToken, config::GhidraConfig, error::ParserError, export, headless::run_headless,
+    job::JobDirectory,
 };
 
 /// The exporter and schema that shape a saved analysis; editing either
@@ -48,6 +49,22 @@ impl GhidraAdapter {
     /// writes a protobuf message there. Rust decodes that message and saves a
     /// copy before the temporary directory is removed.
     pub fn analyze(&self, input: impl AsRef<Path>) -> Result<Program, ParserError> {
+        self.analyze_with_cancellation(input, &CancellationToken::new())
+    }
+
+    /// Analyze an input binary until completion or until `cancellation` is set.
+    ///
+    /// Cancellation terminates a running Ghidra process tree. The existing
+    /// [`Self::analyze`] method remains available for callers that do not need
+    /// to manage cancellation explicitly.
+    pub fn analyze_with_cancellation(
+        &self,
+        input: impl AsRef<Path>,
+        cancellation: &CancellationToken,
+    ) -> Result<Program, ParserError> {
+        if cancellation.is_cancelled() {
+            return Err(ParserError::Cancelled);
+        }
         self.config.validate()?;
 
         let input = input.as_ref();
@@ -64,6 +81,9 @@ impl GhidraAdapter {
             && saved.is_file()
         {
             if let Ok(program) = export::read_export(saved) {
+                if cancellation.is_cancelled() {
+                    return Err(ParserError::Cancelled);
+                }
                 return Ok(program);
             }
             let _ = fs::remove_file(saved);
@@ -74,13 +94,20 @@ impl GhidraAdapter {
 
         // `run_headless` returns only after Ghidra exits successfully. A
         // nonzero exit status and timeout are already represented as errors.
-        let _output = run_headless(&self.config, job.path(), &input, &export_path)?;
+        let _output = run_headless(&self.config, job.path(), &input, &export_path, cancellation)?;
+
+        if cancellation.is_cancelled() {
+            return Err(ParserError::Cancelled);
+        }
 
         if !export_path.is_file() {
             return Err(ParserError::ExportMissing(export_path));
         }
 
         let program = export::read_export(&export_path)?;
+        if cancellation.is_cancelled() {
+            return Err(ParserError::Cancelled);
+        }
         if let Some(saved) = &saved {
             // Saving is best-effort: a cache failure must not fail an
             // analysis that succeeded. The job directory's name is unique, so
