@@ -27,6 +27,8 @@ pub enum ParserError {
     },
     /// Ghidra did not finish before the configured timeout.
     TimedOut(Duration),
+    /// The caller requested that the running Ghidra analysis stop.
+    Cancelled,
     /// Ghidra exited successfully but did not create its expected export.
     ExportMissing(PathBuf),
     /// Reading or decoding Ghidra's protobuf export failed.
@@ -78,6 +80,7 @@ impl fmt::Display for ParserError {
                 "Ghidra analysis exceeded the timeout of {} seconds",
                 timeout.as_secs_f64()
             ),
+            Self::Cancelled => write!(formatter, "Ghidra analysis was cancelled"),
             Self::ExportMissing(path) => write!(
                 formatter,
                 "Ghidra completed without creating the expected protobuf export: {}",
@@ -100,6 +103,7 @@ impl Error for ParserError {
             | Self::InputNotFile(_)
             | Self::GhidraFailed { .. }
             | Self::TimedOut(_)
+            | Self::Cancelled
             | Self::ExportMissing(_) => None,
         }
     }

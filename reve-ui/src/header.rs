@@ -2,16 +2,31 @@ use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Placement, TitleBar, h_flex, oklch,
 };
 use gpui_kit::*;
 
-use crate::{GoBack, GoForward, GoTo, ToggleAppearance, ToggleBottom, ToggleSidebar, icon};
+use crate::recent::RecentStore;
+use crate::{
+    ClearRecent, CloseBinary, CloseWindow, GoBack, GoForward, GoTo, OpenBinary,
+    OpenBinaryInNewWindow, OpenRecent, OpenRecentBinary, RemoveRecentBinary, ToggleAppearance,
+    ToggleBottom, ToggleSidebar, icon,
+};
 
 pub const HEIGHT: Pixels = px(42.);
 // Header glyphs are 18px Phosphor icons.
 const GLYPH: Pixels = px(18.);
+
+// macOS places traffic lights at the leading edge; other platforms have none there.
+pub fn file_menu_left_inset() -> Pixels {
+    if cfg!(target_os = "macos") {
+        px(78.)
+    } else {
+        px(0.)
+    }
+}
 
 // The window's header, which panels it shows open, and whether Back and Forward have
 // anywhere to go. Notifying it redraws the window too.
@@ -68,7 +83,8 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
         .child(
             h_flex().flex_1().child(
                 controls()
-                    .ml(px(78.))
+                    .ml(file_menu_left_inset())
+                    .child(file_menu(cx))
                     .child(sidebar)
                     .child(back)
                     .child(forward),
@@ -81,6 +97,89 @@ fn header(header: &Header, window: &mut Window, cx: &mut App) -> TitleBar {
                 .justify_end()
                 .child(controls().child(appearance).child(bottom)),
         )
+}
+
+// An in-window File menu because Windows does not show the app's native menu
+// alongside rêve's custom title bar.
+pub fn file_menu(cx: &App) -> impl IntoElement {
+    let ink = cx.theme().foreground;
+    Button::new("file-menu")
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .foreground(ink.opacity(0.64))
+                .hover(ink.opacity(0.08))
+                .active(ink.opacity(0.12)),
+        )
+        .h_7()
+        .px_2()
+        .rounded(px(6.))
+        .text_size(px(12.5))
+        .child("File")
+        .dropdown_menu(move |mut menu, window, cx| {
+            menu = menu
+                .menu("Open…", Box::new(OpenBinary))
+                .menu("Open in New Window…", Box::new(OpenBinaryInNewWindow));
+
+            let files = cx.global::<RecentStore>().entries();
+            if files.is_empty() {
+                menu =
+                    menu.separator()
+                        .menu_with_disabled("Open Recent", Box::new(OpenRecent), true);
+            } else {
+                menu = menu.separator().submenu(
+                    "Open Recent",
+                    window,
+                    cx,
+                    |mut recent, window, cx| {
+                        for file in cx.global::<RecentStore>().entries() {
+                            let path = file.path;
+                            let name = format!(
+                                "{} — {}",
+                                file.name,
+                                path.parent()
+                                    .map(|parent| parent.display().to_string())
+                                    .unwrap_or_default()
+                            );
+                            let available = file.available;
+                            recent =
+                                recent.submenu(name, window, cx, move |mut file_menu, _, _| {
+                                    if available {
+                                        file_menu = file_menu
+                                            .menu(
+                                                "Open in This Window",
+                                                Box::new(OpenRecentBinary {
+                                                    path: path.clone(),
+                                                    in_new_window: false,
+                                                }),
+                                            )
+                                            .menu(
+                                                "Open in New Window",
+                                                Box::new(OpenRecentBinary {
+                                                    path: path.clone(),
+                                                    in_new_window: true,
+                                                }),
+                                            )
+                                            .separator();
+                                    } else {
+                                        file_menu = file_menu.label("File is missing").separator();
+                                    }
+                                    file_menu.menu(
+                                        "Remove from Recent",
+                                        Box::new(RemoveRecentBinary { path: path.clone() }),
+                                    )
+                                });
+                        }
+                        recent
+                            .separator()
+                            .menu("Clear Recent", Box::new(ClearRecent))
+                    },
+                );
+            }
+
+            menu.separator()
+                .menu("Close Binary", Box::new(CloseBinary))
+                .menu("Close Window", Box::new(CloseWindow))
+        })
 }
 
 // What the toggles do from where they stand, worded alike in tooltips and the command palette.

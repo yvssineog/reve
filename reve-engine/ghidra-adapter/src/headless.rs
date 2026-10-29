@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{config::GhidraConfig, error::ParserError};
+use crate::{CancellationToken, config::GhidraConfig, error::ParserError};
 
 const PROJECT_NAME: &str = "ReveAnalysis";
 const EXPORT_SCRIPT: &str = "Export.java";
@@ -26,13 +26,18 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 ///
 /// `project_location` is the unique per-analysis directory. `export_path` is
 /// passed to the script as its only argument. This function returns only after
-/// the Ghidra process exits or the configured timeout expires.
+/// the Ghidra process exits, cancellation is requested, or the configured
+/// timeout expires.
 pub(crate) fn run_headless(
     config: &GhidraConfig,
     project_location: &Path,
     input: &Path,
     export_path: &Path,
+    cancellation: &CancellationToken,
 ) -> Result<Output, ParserError> {
+    if cancellation.is_cancelled() {
+        return Err(ParserError::Cancelled);
+    }
     config.validate()?;
     let input =
         fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
@@ -77,6 +82,14 @@ pub(crate) fn run_headless(
                 let _ = child.wait();
                 return Err(ParserError::ProcessStart(error));
             }
+        }
+
+        if cancellation.is_cancelled() {
+            terminate_process_tree(&mut child);
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(ParserError::Cancelled);
         }
 
         if started_at.elapsed() >= config.timeout {
