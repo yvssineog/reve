@@ -71,11 +71,11 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
     let (extension, script) = if cfg!(windows) {
         let body = match mode {
             "write" => {
-                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%~7', [Convert]::FromBase64String('CgRkZW1v'))\"\r\necho fake stdout\r\necho fake stderr 1>&2\r\nexit /b 0\r\n"
+                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%last%', [Convert]::FromBase64String('CgRkZW1v'))\"\r\necho fake stdout\r\necho fake stderr 1>&2\r\nexit /b 0\r\n"
             }
             "missing" => "echo fake stdout\r\nexit /b 0\r\n",
             "invalid" => {
-                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%~7', [Convert]::FromBase64String('CgRk'))\"\r\nexit /b 0\r\n"
+                "powershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllBytes('%last%', [Convert]::FromBase64String('CgRk'))\"\r\nexit /b 0\r\n"
             }
             "fail" => "echo fake stdout\r\necho fake stderr 1>&2\r\nexit /b 23\r\n",
             "timeout" => {
@@ -90,7 +90,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         };
         (
             "bat",
-            format!("@echo off\r\necho launch>>\"%~dp0launches\"\r\n{body}"),
+            format!(
+                "@echo off\r\necho launch>>\"%~dp0launches\"\r\n:args\r\nif not \"%~1\"==\"\" (set \"last=%~1\" & shift & goto args)\r\n{body}"
+            ),
         )
     } else {
         let body = match mode {
@@ -114,7 +116,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         };
         (
             "sh",
-            format!("#!/bin/sh\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"),
+            format!(
+                "#!/bin/sh\n[ -n \"$REVE_FAKE_WARM_UP\" ] && exit 0\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"
+            ),
         )
     };
 
@@ -128,6 +132,12 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         let mut permissions = fs::metadata(&path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions)?;
+
+        // macOS checks a new executable on its first exec, which can outlast
+        // a test's timeout. Pay that cost here, before any test times it.
+        std::process::Command::new(&path)
+            .env("REVE_FAKE_WARM_UP", "1")
+            .status()?;
     }
 
     Ok(path)
