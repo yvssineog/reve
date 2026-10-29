@@ -3,4 +3,4 @@ members = ["reve-ui", "reve-engine/model", "reve-engine/ghidra-adapter"]
 resolver = "3"
 
 [workspace.package]
-authors = ["Yassine", "Ali Elazdi"]
+authors = ["Yassine", "Ali El Azdi"]
