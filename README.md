@@ -4,6 +4,8 @@
 
 <h1 align="center">rêve</h1>
 
+<p align="center"><b>R</b>everse <b>E</b>ngineering <b>V</b>isual <b>E</b>nvironment</p>
+
 <p align="center">Open-source reverse engineering application.</p>
 
 <p align="center">
