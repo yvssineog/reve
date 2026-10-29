@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Export extends GhidraScript {
 	private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
@@ -113,6 +114,8 @@ public class Export extends GhidraScript {
 	private Map<Address, Engine.Decompilation> decompileFunctions(
 			Program program, DecompInterface opened) throws Exception {
 		Deque<DecompInterface> idle = new ConcurrentLinkedDeque<>(List.of(opened));
+		// Cancelled workers can outlive decompileFunctions; once closed, each disposes its own.
+		AtomicBoolean closed = new AtomicBoolean();
 		QCallback<Function, Map.Entry<Address, Engine.Decompilation>> callback = (function, itemMonitor) -> {
 			Address entry = function.getEntryPoint();
 			DecompInterface decompiler = idle.poll();
@@ -128,7 +131,13 @@ public class Export extends GhidraScript {
 			try {
 				return Map.entry(entry, collectDecompilation(function, decompiler, itemMonitor));
 			} finally {
-				idle.push(decompiler);
+				synchronized (closed) {
+					if (closed.get()) {
+						decompiler.dispose();
+					} else {
+						idle.push(decompiler);
+					}
+				}
 			}
 		};
 
@@ -138,7 +147,12 @@ public class Export extends GhidraScript {
 				program.getFunctionManager().getFunctions(true),
 				entry -> decompilations.put(entry.getKey(), entry.getValue()), monitor);
 		} finally {
-			idle.forEach(DecompInterface::dispose);
+			synchronized (closed) {
+				closed.set(true);
+			}
+			for (DecompInterface decompiler; (decompiler = idle.poll()) != null; ) {
+				decompiler.dispose();
+			}
 		}
 		monitor.checkCancelled();
 		return decompilations;
