@@ -5390,6 +5390,7 @@ name = "reve-ui"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "embed-resource",
  "gpui-kit",
  "image",
  "objc2 0.6.5",

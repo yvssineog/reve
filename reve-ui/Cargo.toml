@@ -17,6 +17,9 @@ tempfile = "3"
 reve-ghidra-adapter = { path = "../reve-engine/ghidra-adapter" }
 reve-model = { path = "../reve-engine/model" }
 
+[build-dependencies]
+embed-resource = "3.0"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
