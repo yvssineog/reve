@@ -800,15 +800,9 @@ impl Reve {
                     cx.notify();
                 })
             }))
-            // Cached like the panes; the window redraws its header only when it changes.
-            .child(
-                AnyView::from(self.header.clone()).cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(header::HEIGHT)
-                        .flex_none(),
-                ),
-            )
+            // Keep this view uncached: GPUI registers the Windows caption-button hit areas
+            // during paint, and a cached header would draw the icons without registering them.
+            .child(self.header.clone())
             // Dividers between panes are hairlines that can be dragged.
             .child(
                 div()
