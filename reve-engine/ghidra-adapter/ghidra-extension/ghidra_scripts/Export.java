@@ -19,6 +19,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.util.exception.CancelledException;
+import ghidra.util.task.TaskMonitor;
 import com.google.protobuf.ByteString;
 import generic.concurrent.QCallback;
 import reve.engine.v1.Engine;
@@ -125,8 +126,7 @@ public class Export extends GhidraScript {
 				}
 			}
 			try {
-				return Map.entry(entry, collectDecompilation(
-					decompiler.decompileFunction(function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor)));
+				return Map.entry(entry, collectDecompilation(function, decompiler, itemMonitor));
 			} finally {
 				idle.push(decompiler);
 			}
@@ -165,8 +165,11 @@ public class Export extends GhidraScript {
 		return result.build();
 	}
 
-	private Engine.Decompilation collectDecompilation(DecompileResults results) throws Exception {
+	private Engine.Decompilation collectDecompilation(
+			Function function, DecompInterface decompiler, TaskMonitor itemMonitor) throws Exception {
 		try {
+			DecompileResults results = decompiler.decompileFunction(
+				function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor);
 			if (results.isCancelled()) {
 				if (monitor.isCancelled()) {
 					monitor.checkCancelled();
