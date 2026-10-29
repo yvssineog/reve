@@ -116,7 +116,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         };
         (
             "sh",
-            format!("#!/bin/sh\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"),
+            format!(
+                "#!/bin/sh\n[ -n \"$REVE_FAKE_WARM_UP\" ] && exit 0\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"
+            ),
         )
     };
 
@@ -130,6 +132,12 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         let mut permissions = fs::metadata(&path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions)?;
+
+        // macOS checks a new executable on its first exec, which can outlast
+        // a test's timeout. Pay that cost here, before any test times it.
+        std::process::Command::new(&path)
+            .env("REVE_FAKE_WARM_UP", "1")
+            .status()?;
     }
 
     Ok(path)

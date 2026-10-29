@@ -319,8 +319,6 @@ mod tests {
     fn analyze_timeout_kills_processes_the_launcher_started() {
         let (_temp, config, input) = setup("timeout");
         let pid_file = config.analyze_headless.with_file_name("launcher-child.pid");
-        // macOS can take about a second to first exec a freshly written
-        // script, and the fake must record its child's pid before the kill.
         let adapter = GhidraAdapter::new(config.with_timeout(Duration::from_secs(2)));
 
         assert!(matches!(
