@@ -7,6 +7,7 @@ mod logo;
 mod menu;
 mod palette;
 mod panes;
+mod recent;
 mod window;
 
 use std::borrow::Cow;
@@ -33,6 +34,7 @@ use panes::functions::Functions;
 use panes::listing::Listing;
 use panes::symbols::Symbols;
 use panes::{note, pane};
+use recent::RecentStore;
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
 // plus the panel toggle glyphs.
@@ -242,6 +244,9 @@ impl Reve {
 
     // Shows `binary` and starts analyzing it.
     fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(error) = cx.global_mut::<RecentStore>().record(&binary) {
+            eprintln!("could not save recent binary {}: {error}", binary.display());
+        }
         self.cancel_analysis();
         self.analysis_generation = self.analysis_generation.wrapping_add(1);
         let generation = self.analysis_generation;
@@ -677,6 +682,7 @@ fn main() {
         gpui_kit::init(cx);
         panes::listing::init(cx);
         menu::init(cx);
+        cx.set_global(RecentStore::load());
 
         // Dark is warm greys from oklch(0.203 0.0032 17.4) up, not the kit's near-black.
         ThemeRegistry::global_mut(cx)

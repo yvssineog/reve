@@ -5389,6 +5389,7 @@ version = "0.1.0"
 name = "reve-ui"
 version = "0.1.0"
 dependencies = [
+ "dirs 6.0.0",
  "gpui-kit",
  "image",
  "objc2 0.6.5",
@@ -5397,6 +5398,9 @@ dependencies = [
  "resvg 0.46.0",
  "reve-ghidra-adapter",
  "reve-model",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
