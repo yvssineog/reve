@@ -7,6 +7,7 @@ mod logo;
 mod menu;
 mod palette;
 mod panes;
+mod window;
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -15,7 +16,7 @@ use gpui_kit::assets::Assets;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, Theme, ThemeRegistry, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Icon, Sizable as _, Theme, ThemeRegistry, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -94,6 +95,8 @@ actions!(
     [
         Quit,
         OpenBinary,
+        OpenBinaryInNewWindow,
+        CloseBinary,
         ToggleSidebar,
         ToggleBottom,
         ToggleAppearance,
@@ -130,6 +133,8 @@ enum Screen {
 
 // An open binary and the panes showing it.
 struct Workspace {
+    // The selected file, retained for recent-file and reload actions.
+    path: PathBuf,
     // The binary's file name.
     name: SharedString,
     analysis: Analysis,
@@ -155,10 +160,10 @@ struct Panes {
 
 impl Reve {
     // Opens on the empty screen, focused so its I key works without a click first.
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>, initial_binary: Option<PathBuf>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        Self {
+        let mut this = Self {
             focus,
             header: cx.new(|_| Header {
                 sidebar_open: true,
@@ -169,7 +174,11 @@ impl Reve {
             screen: Screen::Empty(cx.new(Logo::new)),
             // Shown in debug builds; secondary-alt-p toggles them in any build.
             hud: cfg!(debug_assertions).then(Hud::default),
+        };
+        if let Some(binary) = initial_binary {
+            this.open(binary, window, cx);
         }
+        this
     }
 
     // Asks the system's file picker for the binary to analyze; cancelling leaves the empty
@@ -195,15 +204,52 @@ impl Reve {
         .detach();
     }
 
+    // Picks a binary and opens it in a separate, independently initialized window.
+    fn open_binary_in_new_window(
+        &mut self,
+        _: &OpenBinaryInNewWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open in New Window".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(binary) = paths.into_iter().next() else {
+                return;
+            };
+            this.update_in(cx, |_, _, cx| {
+                if let Err(error) = crate::window::open(cx, Some(binary.clone())) {
+                    eprintln!("opening {} in a new window: {error}", binary.display());
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     // Shows `binary` and starts analyzing it.
     fn open(&mut self, binary: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // One workspace, one analysis.
         if let Screen::Open(_) = self.screen {
             return;
         }
-        let name = SharedString::from(binary.file_name().unwrap().to_string_lossy().into_owned());
+        let name = SharedString::from(
+            binary
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| binary.display().to_string()),
+        );
+        let path = binary.clone();
         Self::analyze(binary, name.clone(), window, cx);
         self.screen = Screen::Open(Workspace {
+            path,
             name,
             analysis: Analysis::Analyzing,
         });
@@ -223,6 +269,21 @@ impl Reve {
             .ok();
         })
         .detach();
+    }
+
+    // Drops this window's binary panes and returns it to the home screen.
+    fn close_binary(&mut self, _: &CloseBinary, _: &mut Window, cx: &mut Context<Self>) {
+        if matches!(&self.screen, Screen::Open(_)) {
+            self.screen = Screen::Empty(cx.new(Logo::new));
+            self.header.update(cx, |header, cx| {
+                header.sidebar_open = true;
+                header.bottom_open = true;
+                header.back = false;
+                header.forward = false;
+                cx.notify();
+            });
+            cx.notify();
+        }
     }
 
     // What the command palette offers on this screen, worded for how things stand. Glyphs
@@ -323,9 +384,10 @@ impl Reve {
         let Screen::Open(workspace) = &mut self.screen else {
             return;
         };
+        let path = workspace.path.clone();
         workspace.analysis = match result {
             Err(error) => {
-                eprintln!("analyzing {name}: {error}");
+                eprintln!("analyzing {}: {error}", path.display());
                 Analysis::Failed(match error {
                     ParserError::GhidraFailed { status, .. } => {
                         format!("Ghidra failed ({status})").into()
@@ -385,6 +447,8 @@ impl Render for Reve {
                 };
                 cx.notify();
             }))
+            .on_action(cx.listener(Self::open_binary_in_new_window))
+            .on_action(cx.listener(Self::close_binary))
             .child(self.screen(cx))
             .children(hud)
     }
@@ -624,31 +688,8 @@ fn main() {
         })
         .detach();
 
-        // Open a 1440x900 window in the middle of the screen.
-        // The system title bar is hidden; our header draws in its place.
-        // The traffic lights sit where the Electron build has them, centered in the 42px header.
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
-            window_min_size: Some(size(px(1024.), px(600.))),
-            titlebar: Some(TitlebarOptions {
-                traffic_light_position: Some(point(px(16.), px(15.))),
-                ..TitleBar::title_bar_options()
-            }),
-            ..TitleBar::window_options()
-        };
-        gpui_kit::open_window(options, cx, |window, cx| {
-            // Name shown in Mission Control and the Window menu.
-            window.set_window_title("rêve");
-
-            // Switch light/dark live when the system setting changes.
-            window
-                .observe_window_appearance(|window, cx| {
-                    Theme::sync_system_appearance(Some(window), cx)
-                })
-                .detach();
-            cx.new(|cx| Reve::new(window, cx))
-        })
-        .expect("failed to open window");
+        // Open the first window through the same entry point secondary windows use.
+        window::open(cx, None).expect("failed to open window");
 
         #[cfg(target_os = "macos")]
         logo::set_dock_icon();
