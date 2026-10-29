@@ -7,6 +7,7 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.component.DecompilerUtils;
+import ghidra.app.decompiler.parallel.ParallelDecompiler;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Function;
@@ -19,13 +20,19 @@ import ghidra.program.model.lang.Language;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.util.exception.CancelledException;
 import com.google.protobuf.ByteString;
+import generic.concurrent.QCallback;
 import reve.engine.v1.Engine;
 
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Deque;
+import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 public class Export extends GhidraScript {
 	private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
@@ -69,20 +76,23 @@ public class Export extends GhidraScript {
 		DecompInterface decompiler = new DecompInterface();
 		decompiler.toggleCCode(true);
 		String decompilerOpenError = openDecompiler(decompiler, program);
-		if (decompilerOpenError != null) {
+		Map<Address, Engine.Decompilation> decompilations = Map.of();
+		if (decompilerOpenError == null) {
+			decompilations = decompileFunctions(program, decompiler);
+		} else {
+			decompiler.dispose();
 			println("WARNING: " + decompilerOpenError + "; function instructions will still be exported.");
 		}
 
 		Listing listing = program.getListing();
-		try {
-			FunctionIterator functions = program.getFunctionManager().getFunctions(true);
-			while (functions.hasNext()) {
-				monitor.checkCancelled();
-				result.addFunctions(collectFunction(
-					functions.next(), listing, defaultSpace, decompiler, decompilerOpenError));
-			}
-		} finally {
-			decompiler.dispose();
+		FunctionIterator functions = program.getFunctionManager().getFunctions(true);
+		while (functions.hasNext()) {
+			monitor.checkCancelled();
+			Function function = functions.next();
+			Engine.Decompilation decompilation = decompilerOpenError == null
+				? decompilations.get(function.getEntryPoint())
+				: failedDecompilation(decompilerOpenError);
+			result.addFunctions(collectFunction(function, listing, defaultSpace, decompilation));
 		}
 		return result.build();
 	}
@@ -98,9 +108,45 @@ public class Export extends GhidraScript {
 		}
 	}
 
+	// Not DecompilerCallback: its pool opens each decompiler under the lock every release waits on.
+	private Map<Address, Engine.Decompilation> decompileFunctions(
+			Program program, DecompInterface opened) throws Exception {
+		Deque<DecompInterface> idle = new ConcurrentLinkedDeque<>(List.of(opened));
+		QCallback<Function, Map.Entry<Address, Engine.Decompilation>> callback = (function, itemMonitor) -> {
+			Address entry = function.getEntryPoint();
+			DecompInterface decompiler = idle.poll();
+			if (decompiler == null) {
+				decompiler = new DecompInterface();
+				decompiler.toggleCCode(true);
+				String openError = openDecompiler(decompiler, program);
+				if (openError != null) {
+					decompiler.dispose();
+					return Map.entry(entry, failedDecompilation(openError));
+				}
+			}
+			try {
+				return Map.entry(entry, collectDecompilation(
+					decompiler.decompileFunction(function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor)));
+			} finally {
+				idle.push(decompiler);
+			}
+		};
+
+		Map<Address, Engine.Decompilation> decompilations = new ConcurrentHashMap<>();
+		try {
+			ParallelDecompiler.decompileFunctions(callback, program,
+				program.getFunctionManager().getFunctions(true),
+				entry -> decompilations.put(entry.getKey(), entry.getValue()), monitor);
+		} finally {
+			idle.forEach(DecompInterface::dispose);
+		}
+		monitor.checkCancelled();
+		return decompilations;
+	}
+
 	private Engine.Function collectFunction(
 			Function function, Listing listing, AddressSpace defaultSpace,
-			DecompInterface decompiler, String decompilerOpenError) throws Exception {
+			Engine.Decompilation decompilation) throws Exception {
 		AddressSetView body = function.getBody();
 		long sizeInAddressUnits = body.getNumAddresses();
 		long sizeInBytes = Math.multiplyExact(sizeInAddressUnits, defaultSpace.getAddressableUnitSize());
@@ -115,23 +161,12 @@ public class Export extends GhidraScript {
 			monitor.checkCancelled();
 			result.addInstructions(collectInstruction(instructions.next()));
 		}
-		result.setDecompilation(collectDecompilation(function, decompiler, decompilerOpenError));
+		result.setDecompilation(decompilation);
 		return result.build();
 	}
 
-	private Engine.Decompilation collectDecompilation(
-			Function function, DecompInterface decompiler, String decompilerOpenError) throws Exception {
-		if (decompilerOpenError != null) {
-			return failedDecompilation(decompilerOpenError);
-		}
-
-		monitor.checkCancelled();
+	private Engine.Decompilation collectDecompilation(DecompileResults results) throws Exception {
 		try {
-			DecompileResults results = decompiler.decompileFunction(
-				function, DECOMPILATION_TIMEOUT_SECONDS, monitor);
-			if (results == null) {
-				return failedDecompilation("Ghidra returned no decompilation result.");
-			}
 			if (results.isCancelled()) {
 				if (monitor.isCancelled()) {
 					monitor.checkCancelled();
