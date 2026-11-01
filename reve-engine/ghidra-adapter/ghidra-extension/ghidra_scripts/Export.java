@@ -28,13 +28,9 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Deque;
-import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Export extends GhidraScript {
 	private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
@@ -113,32 +109,20 @@ public class Export extends GhidraScript {
 	// Not DecompilerCallback: its pool opens each decompiler under the lock every release waits on.
 	private Map<Address, Engine.Decompilation> decompileFunctions(
 			Program program, DecompInterface opened) throws Exception {
-		Deque<DecompInterface> idle = new ConcurrentLinkedDeque<>(List.of(opened));
-		// Cancelled workers can outlive decompileFunctions; once closed, each disposes its own.
-		AtomicBoolean closed = new AtomicBoolean();
+		DecompilerPool<DecompInterface> pool = new DecompilerPool<>(opened, DecompInterface::dispose);
 		QCallback<Function, Map.Entry<Address, Engine.Decompilation>> callback = (function, itemMonitor) -> {
-			Address entry = function.getEntryPoint();
-			DecompInterface decompiler = idle.poll();
-			if (decompiler == null) {
-				decompiler = new DecompInterface();
-				decompiler.toggleCCode(true);
-				String openError = openDecompiler(decompiler, program);
-				if (openError != null) {
-					decompiler.dispose();
-					return Map.entry(entry, failedDecompilation(openError));
-				}
-			}
+			Engine.Decompilation decompilation;
 			try {
-				return Map.entry(entry, collectDecompilation(function, decompiler, itemMonitor));
-			} finally {
-				synchronized (closed) {
-					if (closed.get()) {
-						decompiler.dispose();
-					} else {
-						idle.push(decompiler);
-					}
+				decompilation = pool.run(
+					() -> openWorkerDecompiler(program),
+					decompiler -> collectDecompilation(function, decompiler, itemMonitor));
+			} catch (Exception error) {
+				if (error instanceof CancelledException || monitor.isCancelled()) {
+					throw error;
 				}
+				decompilation = failedDecompilation(exceptionMessage(error));
 			}
+			return Map.entry(function.getEntryPoint(), decompilation);
 		};
 
 		Map<Address, Engine.Decompilation> decompilations = new ConcurrentHashMap<>();
@@ -147,15 +131,21 @@ public class Export extends GhidraScript {
 				program.getFunctionManager().getFunctions(true),
 				entry -> decompilations.put(entry.getKey(), entry.getValue()), monitor);
 		} finally {
-			synchronized (closed) {
-				closed.set(true);
-			}
-			for (DecompInterface decompiler; (decompiler = idle.poll()) != null; ) {
-				decompiler.dispose();
-			}
+			pool.close();
 		}
 		monitor.checkCancelled();
 		return decompilations;
+	}
+
+	private DecompInterface openWorkerDecompiler(Program program) {
+		DecompInterface decompiler = new DecompInterface();
+		decompiler.toggleCCode(true);
+		String openError = openDecompiler(decompiler, program);
+		if (openError != null) {
+			decompiler.dispose();
+			throw new IllegalStateException(openError);
+		}
+		return decompiler;
 	}
 
 	private Engine.Function collectFunction(
@@ -181,47 +171,40 @@ public class Export extends GhidraScript {
 
 	private Engine.Decompilation collectDecompilation(
 			Function function, DecompInterface decompiler, TaskMonitor itemMonitor) throws Exception {
-		try {
-			DecompileResults results = decompiler.decompileFunction(
-				function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor);
-			if (results.isCancelled()) {
-				if (monitor.isCancelled()) {
-					monitor.checkCancelled();
-				}
-				return failedDecompilation("Ghidra cancelled this function's decompilation.");
+		DecompileResults results = decompiler.decompileFunction(
+			function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor);
+		if (results.isCancelled()) {
+			if (monitor.isCancelled()) {
+				monitor.checkCancelled();
 			}
-			if (results.isTimedOut()) {
-				return timedOutDecompilation(diagnostic(
-					results.getErrorMessage(), "Decompilation exceeded the "
-						+ DECOMPILATION_TIMEOUT_SECONDS + " second time limit."));
-			}
-			if (!results.decompileCompleted()) {
-				return failedDecompilation(diagnostic(
-					results.getErrorMessage(), "Ghidra could not decompile this function."));
-			}
-
-			DecompiledFunction decompiled = results.getDecompiledFunction();
-			if (decompiled == null) {
-				return failedDecompilation("Ghidra completed decompilation without returning C code.");
-			}
-
-			Engine.Decompilation.Builder result = Engine.Decompilation.newBuilder()
-				.setStatus(Engine.Decompilation.Status.SUCCEEDED)
-				.setSignature(nullToEmpty(decompiled.getSignature()))
-				.setCCode(nullToEmpty(decompiled.getC()));
-			ClangTokenGroup markup = results.getCCodeMarkup();
-			if (markup != null) {
-				for (ClangLine line : DecompilerUtils.toLines(markup)) {
-					result.addLines(collectLine(line));
-				}
-			}
-			return result.build();
-		} catch (Exception error) {
-			if (error instanceof CancelledException || monitor.isCancelled()) {
-				throw error;
-			}
-			return failedDecompilation(exceptionMessage(error));
+			return failedDecompilation("Ghidra cancelled this function's decompilation.");
 		}
+		if (results.isTimedOut()) {
+			return timedOutDecompilation(diagnostic(
+				results.getErrorMessage(), "Decompilation exceeded the "
+					+ DECOMPILATION_TIMEOUT_SECONDS + " second time limit."));
+		}
+		if (!results.decompileCompleted()) {
+			return failedDecompilation(diagnostic(
+				results.getErrorMessage(), "Ghidra could not decompile this function."));
+		}
+
+		DecompiledFunction decompiled = results.getDecompiledFunction();
+		if (decompiled == null) {
+			return failedDecompilation("Ghidra completed decompilation without returning C code.");
+		}
+
+		Engine.Decompilation.Builder result = Engine.Decompilation.newBuilder()
+			.setStatus(Engine.Decompilation.Status.SUCCEEDED)
+			.setSignature(nullToEmpty(decompiled.getSignature()))
+			.setCCode(nullToEmpty(decompiled.getC()));
+		ClangTokenGroup markup = results.getCCodeMarkup();
+		if (markup != null) {
+			for (ClangLine line : DecompilerUtils.toLines(markup)) {
+				result.addLines(collectLine(line));
+			}
+		}
+		return result.build();
 	}
 
 	private Engine.Line collectLine(ClangLine line) {
