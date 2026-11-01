@@ -169,7 +169,7 @@ public class Export extends GhidraScript {
 		return result.build();
 	}
 
-	private Engine.Decompilation collectDecompilation(
+	protected Engine.Decompilation collectDecompilation(
 			Function function, DecompInterface decompiler, TaskMonitor itemMonitor) throws Exception {
 		DecompileResults results = decompiler.decompileFunction(
 			function, DECOMPILATION_TIMEOUT_SECONDS, itemMonitor);
