@@ -65,7 +65,9 @@ pub(crate) fn fake_jdk(directory: &Path) -> io::Result<PathBuf> {
 
 /// Create a fake `analyzeHeadless` launcher for an end-to-end adapter test.
 ///
-/// The `mode` is one of `write`, `missing`, `invalid`, `fail`, or `timeout`.
+/// The `mode` is one of `write`, `missing`, `invalid`, `fail`, `timeout`, or
+/// `serve`. `serve` writes its arguments to `args` beside the script, one per
+/// line, then runs until a `stop` file appears there.
 /// Every launch appends its third argument, `-import` or `-process`, as a line
 /// to `launches` beside the script. An import creates the project's files in
 /// the project location, its first argument, as Ghidra does.
@@ -82,6 +84,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
             "fail" => "echo fake stdout\r\necho fake stderr 1>&2\r\nexit /b 23\r\n",
             "timeout" => {
                 "powershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 10\"\r\nexit /b 0\r\n"
+            }
+            "serve" => {
+                "(for %%a in (%*) do @echo %%~a)>\"%~dp0args\"\r\npowershell.exe -NoProfile -NonInteractive -Command \"while (!(Test-Path '%~dp0stop')) { Start-Sleep -Milliseconds 100 }\"\r\nexit /b 0\r\n"
             }
             _ => {
                 return Err(io::Error::new(
@@ -109,6 +114,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
             // Like Ghidra's launch.sh, start the long-running child without
             // `exec`, and record its pid so a test can check it was killed.
             "timeout" => "sleep 30 &\necho $! > \"$(dirname \"$0\")/launcher-child.pid\"\nwait\n",
+            "serve" => {
+                "printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args\"\nwhile [ ! -e \"$(dirname \"$0\")/stop\" ]; do sleep 0.1; done\n"
+            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,

@@ -33,6 +33,8 @@ pub enum ParserError {
     ExportMissing(PathBuf),
     /// Reading or decoding Ghidra's protobuf export failed.
     Export(ExportError),
+    /// The binary has no Ghidra project to edit; analyze it first.
+    NotAnalyzed(PathBuf),
 }
 
 impl fmt::Display for ParserError {
@@ -87,6 +89,11 @@ impl fmt::Display for ParserError {
                 path.display()
             ),
             Self::Export(error) => write!(formatter, "could not read Ghidra export: {error}"),
+            Self::NotAnalyzed(path) => write!(
+                formatter,
+                "{} has no Ghidra project to edit; analyze it first",
+                path.display()
+            ),
         }
     }
 }
@@ -104,7 +111,8 @@ impl Error for ParserError {
             | Self::GhidraFailed { .. }
             | Self::TimedOut(_)
             | Self::Cancelled
-            | Self::ExportMissing(_) => None,
+            | Self::ExportMissing(_)
+            | Self::NotAnalyzed(_) => None,
         }
     }
 }

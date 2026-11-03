@@ -16,11 +16,11 @@ use crate::{CancellationToken, config::GhidraConfig, error::ParserError};
 pub(crate) const PROJECT_NAME: &str = "ReveAnalysis";
 const EXPORT_SCRIPT: &str = "Export.java";
 /// Searched before the installed extension, so `Export.java` edits apply without reinstalling it.
-const SCRIPTS_DIR: &str = concat!(
+pub(crate) const SCRIPTS_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/ghidra-extension/ghidra_scripts"
 );
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Where the program Ghidra exports comes from.
 pub(crate) enum Source<'a> {
@@ -134,7 +134,10 @@ pub(crate) fn run_headless(
     Ok(output)
 }
 
-fn configure_java_environment(command: &mut Command, java_home: &Path) -> Result<(), ParserError> {
+pub(crate) fn configure_java_environment(
+    command: &mut Command,
+    java_home: &Path,
+) -> Result<(), ParserError> {
     // `canonicalize` returns Windows verbatim paths (`\\?\C:\...`). Ghidra's
     // batch launchers do not handle those reliably, so pass normal DOS paths
     // across the process boundary.
@@ -169,7 +172,7 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8
 }
 
 #[cfg(not(windows))]
-fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
+pub(crate) fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     use std::os::unix::process::CommandExt;
 
     let mut command = Command::new(launcher);
@@ -178,7 +181,7 @@ fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
 }
 
 #[cfg(windows)]
-fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
+pub(crate) fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     use std::os::windows::process::CommandExt;
 
     if !matches!(
@@ -234,7 +237,7 @@ fn child_path_arg(value: &OsStr) -> std::ffi::OsString {
 }
 
 #[cfg(windows)]
-fn terminate_process_tree(child: &mut std::process::Child) {
+pub(crate) fn terminate_process_tree(child: &mut std::process::Child) {
     // analyzeHeadless.bat starts Java as a child of cmd.exe. Kill the process
     // tree so a timeout does not leave the Java analysis running in background.
     let pid = child.id().to_string();
@@ -247,7 +250,7 @@ fn terminate_process_tree(child: &mut std::process::Child) {
 }
 
 #[cfg(not(windows))]
-fn terminate_process_tree(child: &mut std::process::Child) {
+pub(crate) fn terminate_process_tree(child: &mut std::process::Child) {
     // analyzeHeadless runs launch.sh, which runs Java, neither with `exec`.
     // The launcher leads its own process group, so kill the whole group.
     let group = format!("-{}", child.id());

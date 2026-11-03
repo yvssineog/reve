@@ -15,6 +15,7 @@ use crate::{
     export,
     headless::{PROJECT_NAME, Source, run_headless},
     job::JobDirectory,
+    session::GhidraSession,
 };
 
 /// The exporter and schema that shape a saved analysis; editing either
@@ -86,8 +87,12 @@ impl GhidraAdapter {
         let input =
             fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
         let digest = digest(&input).map_err(|_| ParserError::InputNotFound(input.clone()))?;
+        let project = self.project(&digest);
+        let analyzed = analyzed(&project);
         let saved = self.saved_export(&input, &digest);
-        if let Some(saved) = &saved
+        // A saved export without its project would leave nothing to edit.
+        if analyzed
+            && let Some(saved) = &saved
             && saved.is_file()
         {
             if let Ok(program) = export::read_export(saved) {
@@ -101,8 +106,6 @@ impl GhidraAdapter {
 
         let job = JobDirectory::create(&self.config.projects_dir)?;
         let export_path = job.export_path();
-        let project = self.config.projects_dir.join(format!("{digest:x}"));
-        let analyzed = project.join(format!("{PROJECT_NAME}.gpr")).is_file();
         let (location, source) = if analyzed {
             (project.as_path(), Source::Saved)
         } else {
@@ -142,6 +145,32 @@ impl GhidraAdapter {
         Ok(program)
     }
 
+    /// Start Ghidra on the project an analysis of `input` kept, to edit it.
+    ///
+    /// Returns once Ghidra is ready for edits, which takes seconds, or fails
+    /// with [`ParserError::NotAnalyzed`] when no analysis kept a project.
+    pub fn session(
+        &self,
+        input: impl AsRef<Path>,
+        cancellation: &CancellationToken,
+    ) -> Result<GhidraSession, ParserError> {
+        self.config.validate()?;
+        let input = input.as_ref();
+        let input =
+            fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+        let digest = digest(&input).map_err(|_| ParserError::InputNotFound(input.clone()))?;
+        let project = self.project(&digest);
+        if !analyzed(&project) {
+            return Err(ParserError::NotAnalyzed(input));
+        }
+        GhidraSession::start(&self.config, &project, cancellation)
+    }
+
+    /// The directory of the Ghidra project for the binary whose bytes hash to `digest`.
+    fn project(&self, digest: &Digest) -> PathBuf {
+        self.config.projects_dir.join(format!("{digest:x}"))
+    }
+
     /// Where the saved export for `input` lives, keyed by the binary's name
     /// (Ghidra names the program after the file) and bytes, the exporter, the
     /// schema, the installed extension and the Ghidra version. `None` when
@@ -175,6 +204,11 @@ fn digest(path: &Path) -> io::Result<Digest> {
     let mut hasher = Sha256::new();
     io::copy(&mut fs::File::open(path)?, &mut hasher)?;
     Ok(hasher.finalize())
+}
+
+/// Whether `project` holds a complete Ghidra project.
+fn analyzed(project: &Path) -> bool {
+    project.join(format!("{PROJECT_NAME}.gpr")).is_file()
 }
 
 /// Move the project Ghidra created in `job` to `project`. The `.gpr` file
@@ -325,6 +359,24 @@ mod tests {
         fs::write(extension, b"rebuilt fake extension").unwrap();
         adapter.analyze(&input).unwrap();
         assert_eq!(launches(), 3, "rebuilt extension should run Ghidra again");
+    }
+
+    #[test]
+    fn analyze_imports_again_when_the_saved_export_has_no_project() {
+        let (_temp, config, input) = setup("write");
+        let launches_log = config.analyze_headless.with_file_name("launches");
+        let adapter = GhidraAdapter::new(config.clone());
+
+        adapter.analyze(&input).unwrap();
+        fs::remove_dir_all(&config.projects_dir).unwrap();
+        adapter.analyze(&input).unwrap();
+
+        let launches = fs::read_to_string(launches_log).unwrap();
+        assert_eq!(
+            launches.lines().collect::<Vec<_>>(),
+            ["-import", "-import"],
+            "a session needs the project, so the saved export alone isn't enough"
+        );
     }
 
     #[test]

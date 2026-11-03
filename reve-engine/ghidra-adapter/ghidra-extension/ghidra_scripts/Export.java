@@ -31,6 +31,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.TreeSet;
@@ -75,26 +76,16 @@ public class Export extends GhidraScript {
 			.setArchitecture(program.getLanguageID().toString())
 			.setAddressSizeBits(program.getDefaultPointerSize() * Byte.SIZE);
 
-		DecompInterface decompiler = new DecompInterface();
-		decompiler.toggleCCode(true);
-		String decompilerOpenError = openDecompiler(decompiler, program);
-		Map<Address, Engine.Decompilation> decompilations = Map.of();
-		if (decompilerOpenError == null) {
-			decompilations = decompileFunctions(program, decompiler);
-		} else {
-			decompiler.dispose();
-			println("WARNING: " + decompilerOpenError + "; function instructions will still be exported.");
-		}
+		Map<Address, Engine.Decompilation> decompilations =
+			decompile(program, program.getFunctionManager().getFunctions(true));
 
 		Listing listing = program.getListing();
 		FunctionIterator functions = program.getFunctionManager().getFunctions(true);
 		while (functions.hasNext()) {
 			monitor.checkCancelled();
 			Function function = functions.next();
-			Engine.Decompilation decompilation = decompilerOpenError == null
-				? decompilations.get(function.getEntryPoint())
-				: failedDecompilation(decompilerOpenError);
-			result.addFunctions(collectFunction(function, listing, defaultSpace, decompilation));
+			result.addFunctions(collectFunction(
+				function, listing, defaultSpace, decompilations.get(function.getEntryPoint())));
 		}
 		return result.addAllBookmarks(bookmarks(program)).build();
 	}
@@ -120,9 +111,27 @@ public class Export extends GhidraScript {
 		}
 	}
 
+	// Each function's decompilation by entry, failed for every function when the decompiler can't
+	// start.
+	protected Map<Address, Engine.Decompilation> decompile(Program program, Iterator<Function> functions)
+			throws Exception {
+		DecompInterface decompiler = new DecompInterface();
+		decompiler.toggleCCode(true);
+		String openError = openDecompiler(decompiler, program);
+		if (openError == null) {
+			return decompileFunctions(program, decompiler, functions);
+		}
+		decompiler.dispose();
+		println("WARNING: " + openError + "; function instructions will still be exported.");
+		Map<Address, Engine.Decompilation> failed = new HashMap<>();
+		functions.forEachRemaining(
+			function -> failed.put(function.getEntryPoint(), failedDecompilation(openError)));
+		return failed;
+	}
+
 	// Not DecompilerCallback: its pool opens each decompiler under the lock every release waits on.
 	private Map<Address, Engine.Decompilation> decompileFunctions(
-			Program program, DecompInterface opened) throws Exception {
+			Program program, DecompInterface opened, Iterator<Function> functions) throws Exception {
 		DecompilerPool<DecompInterface> pool = new DecompilerPool<>(opened, DecompInterface::dispose);
 		QCallback<Function, Map.Entry<Address, Engine.Decompilation>> callback = (function, itemMonitor) -> {
 			Engine.Decompilation decompilation;
@@ -141,8 +150,7 @@ public class Export extends GhidraScript {
 
 		Map<Address, Engine.Decompilation> decompilations = new ConcurrentHashMap<>();
 		try {
-			ParallelDecompiler.decompileFunctions(callback, program,
-				program.getFunctionManager().getFunctions(true),
+			ParallelDecompiler.decompileFunctions(callback, program, functions,
 				entry -> decompilations.put(entry.getKey(), entry.getValue()), monitor);
 		} finally {
 			pool.close();
@@ -277,7 +285,7 @@ public class Export extends GhidraScript {
 		return message == null || message.isBlank() ? fallback : message;
 	}
 
-	private String exceptionMessage(Exception error) {
+	protected String exceptionMessage(Exception error) {
 		return diagnostic(error.getMessage(), error.getClass().getSimpleName());
 	}
 

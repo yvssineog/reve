@@ -109,6 +109,25 @@ version, so changing the exporter or schema, reinstalling the extension, or
 upgrading Ghidra exports the binary's project again. Delete that directory to
 force a fresh export, and the binary's project to force a fresh analysis.
 
+## Edit a program
+
+`GhidraAdapter::session` starts Ghidra on a binary's kept project with
+`Serve.java` and returns a `GhidraSession` once Ghidra is ready, a few seconds
+later. Each `edit` renames a function, sets an end-of-line comment, or adds or
+removes a Note bookmark. Ghidra makes the edit in its own transaction, saves the
+project, decompiles again every function whose C shows a new name, and answers
+with what changed, or with its reason for refusing the edit. Dropping or closing
+the session closes its connection, and Ghidra exits. Ghidra's output for the
+session goes to `session.log` beside the project.
+
+rêve listens on a loopback port that `Serve.java` connects back to. Before
+anything else, the script sends a random token only the adapter knows, so no
+other local program can drive Ghidra.
+
+`cargo test -p reve-ghidra-adapter -- --ignored` runs a session on a real
+binary with the Ghidra that `scripts/bootstrap.py` installs. It takes about a
+minute.
+
 ## Test the exporter
 
 `developer_scripts/` isn't packaged into the extension. Run these commands from

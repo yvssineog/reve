@@ -29,6 +29,9 @@ pub mod export;
 /// High-level Ghidra analysis operation.
 pub mod orchestrator;
 
+/// A Ghidra process kept open on one binary's project, making the user's edits.
+pub mod session;
+
 /// Per-analysis temporary project and export files.
 pub(crate) mod job;
 
@@ -39,6 +42,7 @@ pub use cancellation::CancellationToken;
 pub use config::GhidraConfig;
 pub use error::ParserError;
 pub use orchestrator::GhidraAdapter;
+pub use session::{EditError, GhidraSession};
 
 #[cfg(test)]
 mod test_support;

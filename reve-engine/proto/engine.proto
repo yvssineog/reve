@@ -113,3 +113,43 @@ message Instruction {
   // End-of-line comment, when the instruction has one.
   optional string comment = 6;
 }
+
+// A change rêve asks Ghidra to make to the program it keeps open.
+message Edit {
+  oneof kind {
+    Rename rename = 1;
+    Comment comment = 2;
+    Bookmark bookmark = 3;
+  }
+}
+
+// Names the function at `entry`. An empty name restores Ghidra's default.
+message Rename {
+  uint64 entry = 1;
+  string name = 2;
+}
+
+// The end-of-line comment at an instruction. Empty text means none.
+message Comment {
+  uint64 address = 1;
+  string text = 2;
+}
+
+// Whether the user's bookmark is at an address.
+message Bookmark {
+  uint64 address = 1;
+  bool on = 2;
+}
+
+// What an edit changed, or why Ghidra refused it.
+message Changes {
+  // Ghidra's reason for refusing the edit. Nothing changed when it is set.
+  optional string error = 1;
+
+  // Functions whose name or decompiled C changed: name, entry and
+  // decompilation only.
+  repeated Function functions = 2;
+
+  repeated Comment comments = 3;
+  repeated Bookmark bookmarks = 4;
+}
