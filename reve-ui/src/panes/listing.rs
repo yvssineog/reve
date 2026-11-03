@@ -5,7 +5,7 @@ use gpui_kit::base::actions::{Confirm, SelectDown, SelectPageDown, SelectPageUp,
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{StyledExt as _, h_flex};
 use gpui_kit::*;
-use reve_model::{Address, Function, Instruction, Program};
+use reve_model::{Address, Changes, Function, Instruction, Program};
 
 use super::{monospace, pressable};
 use crate::palette::Palette;
@@ -84,6 +84,8 @@ pub struct Listing {
     // Hex digits every address shows with, so the address column fits the longest.
     digits: usize,
     history: History,
+    // Edits the program has taken, so panes can tell when to show it again.
+    edits: usize,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
 }
@@ -135,6 +137,7 @@ impl Listing {
             scroll,
             digits,
             history: History::default(),
+            edits: 0,
             focus: cx.focus_handle(),
         }
     }
@@ -237,6 +240,27 @@ impl Listing {
 
     pub fn program(&self) -> &Program {
         &self.program
+    }
+
+    // Takes in what an edit changed. Names show in labels and XREFs, so a rename lays the rows
+    // out again; it moves no instruction, so the cursor stays put.
+    pub fn apply(&mut self, changes: &Changes, cx: &mut Context<Self>) {
+        self.program.apply(changes);
+        if !changes.functions.is_empty() {
+            self.rows = layout(&self.program, self.digits);
+        }
+        self.edits += 1;
+        cx.notify();
+    }
+
+    pub fn edits(&self) -> usize {
+        self.edits
+    }
+
+    // The function the cursor names: the one its instruction calls, or else the one it's in.
+    pub fn named(&self) -> &Function {
+        let (function, instruction) = self.code(self.cursor);
+        callee(&self.program, instruction).unwrap_or(function)
     }
 
     // The function the cursor is in.

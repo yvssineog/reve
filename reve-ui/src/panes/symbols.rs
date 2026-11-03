@@ -20,6 +20,8 @@ pub struct Symbols {
     tree: Entity<TreeState>,
     // The listing cursor's function, marked or about to be.
     current: Address,
+    // The listing's edits the names are from.
+    edits: usize,
     marking: Option<Task<()>>,
     _sync: Subscription,
 }
@@ -27,17 +29,28 @@ pub struct Symbols {
 impl Symbols {
     // Opens with the functions shown and the listing cursor's marked, then follows the cursor.
     pub fn new(listing: Entity<Listing>, cx: &mut Context<Self>) -> Self {
-        let (items, entry) = {
+        let (names, entry, edits) = {
             let listing = listing.read(cx);
-            (items(listing.program()), listing.function().entry)
+            let entry = listing.function().entry;
+            (items(listing.program()), entry, listing.edits())
         };
         let tree = cx.new(|cx| {
-            let mut tree = TreeState::new(cx).items(items);
+            let mut tree = TreeState::new(cx).items(names);
             mark(&mut tree, entry, cx);
             tree
         });
         let sync = cx.observe(&listing, |this, listing, cx| {
-            let entry = listing.read(cx).function().entry;
+            let listing = listing.read(cx);
+            let entry = listing.function().entry;
+            // An edit can rename a function, which moves it among the names.
+            if listing.edits() != this.edits {
+                this.edits = listing.edits();
+                let (names, marked) = (items(listing.program()), this.current);
+                this.tree.update(cx, |tree, cx| {
+                    tree.set_items(names, cx);
+                    mark(tree, marked, cx);
+                });
+            }
             if entry != this.current {
                 this.current = entry;
                 this.marking = Some(cx.spawn(async move |this, cx| {
@@ -50,6 +63,7 @@ impl Symbols {
             listing,
             tree,
             current: entry,
+            edits,
             marking: None,
             _sync: sync,
         }

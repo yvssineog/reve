@@ -17,6 +17,8 @@ pub struct Decompile {
     entry: Address,
     // The cursor's instruction.
     address: Address,
+    // The listing's edits when the function was shown.
+    edits: usize,
     name: SharedString,
     // Its C, one line each, or why there is none.
     code: Result<Vec<Line>, SharedString>,
@@ -73,6 +75,7 @@ impl Decompile {
         Self {
             entry: function.entry,
             address: cursor.address(),
+            edits: cursor.edits(),
             name: function.name.clone().into(),
             code: code(function.decompilation.as_ref()),
             listing,
@@ -87,17 +90,21 @@ impl Decompile {
     }
 
     // Shows the listing cursor's function, opened at the top, once the cursor leaves the
-    // one shown. Then brings the first line the cursor's instruction became into view.
+    // one shown, and again where it was after an edit. Then brings the first line the cursor's
+    // instruction became into view.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let listing = self.listing.read(cx);
-        let (function, address) = (listing.function(), listing.address());
-        if function.entry == self.entry && address == self.address {
+        let (function, address, edits) = (listing.function(), listing.address(), listing.edits());
+        let moved = function.entry != self.entry;
+        if !moved && address == self.address && edits == self.edits {
             return;
         }
-        if function.entry != self.entry {
-            self.entry = function.entry;
+        if moved || edits != self.edits {
+            (self.entry, self.edits) = (function.entry, edits);
             self.name = function.name.clone().into();
             self.code = code(function.decompilation.as_ref());
+        }
+        if moved {
             self.scroll
                 .0
                 .borrow()

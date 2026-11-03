@@ -1,5 +1,6 @@
 mod commands;
 mod empty;
+mod ghidra;
 mod go_to;
 mod header;
 mod hud;
@@ -8,6 +9,7 @@ mod menu;
 mod palette;
 mod panes;
 mod recent;
+mod rename;
 mod window;
 
 use std::borrow::Cow;
@@ -24,6 +26,7 @@ use gpui_kit::*;
 use reve_ghidra_adapter::{CancellationToken, GhidraAdapter, GhidraConfig, ParserError};
 use reve_model::Program;
 
+use ghidra::Ghidra;
 use header::Header;
 use hud::Hud;
 use logo::Logo;
@@ -109,6 +112,7 @@ actions!(
         GoTo,
         GoBack,
         GoForward,
+        RenameFunction,
         ShowCommands
     ]
 );
@@ -167,7 +171,7 @@ struct Workspace {
 // Where Ghidra is with the binary.
 enum Analysis {
     Analyzing,
-    Done(Panes),
+    Done(Box<Panes>),
     // Why, in one line.
     Failed(SharedString),
 }
@@ -178,8 +182,12 @@ struct Panes {
     listing: Entity<Listing>,
     decompile: Entity<Decompile>,
     functions: Entity<Functions>,
+    // Makes the user's edits.
+    ghidra: Entity<Ghidra>,
     // Lights the header's Back and Forward while the listing has jumps to walk.
     _history: Subscription,
+    // Redraws the footer, which says what Ghidra is doing.
+    _ghidra: Subscription,
 }
 
 impl Reve {
@@ -471,8 +479,8 @@ impl Reve {
         let ink = cx.theme().foreground.opacity(0.64);
         let glyph = |name| icon(name, menu::GLYPH).text_color(ink);
         let command = |icon, label, action| commands::row(icon, label, action, window, cx);
-        let (mut navigate, mut view, mut files, mut reve) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut navigate, mut annotate, mut view, mut files, mut reve) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         files.extend([
             command(
                 glyph("folder-simple-duotone"),
@@ -510,6 +518,11 @@ impl Reve {
                         command(glyph("caret-left"), "Go back", Box::new(GoBack)),
                         command(glyph("caret-right"), "Go forward", Box::new(GoForward)),
                     ];
+                    annotate.push(command(
+                        glyph("function-duotone"),
+                        "Rename function",
+                        Box::new(RenameFunction),
+                    ));
                 }
                 let header = self.header.read(cx);
                 view.extend([
@@ -556,6 +569,10 @@ impl Reve {
                 rows: navigate,
             },
             Section {
+                heading: "Annotate",
+                rows: annotate,
+            },
+            Section {
                 heading: "Files",
                 rows: files,
             },
@@ -570,19 +587,24 @@ impl Reve {
         ]
     }
 
-    // The listing, once Ghidra is done with the binary.
-    fn listing(&self) -> Option<Entity<Listing>> {
+    // The panes, once Ghidra is done with the binary.
+    fn panes(&self) -> Option<&Panes> {
         match &self.screen {
             Screen::Open(Workspace {
                 analysis: Analysis::Done(panes),
                 ..
-            }) => Some(panes.listing.clone()),
+            }) => Some(&**panes),
             _ => None,
         }
     }
 
+    fn listing(&self) -> Option<Entity<Listing>> {
+        self.panes().map(|panes| panes.listing.clone())
+    }
+
     // Fills the Symbol Tree, Listing, Decompile and Functions, or says why not. The listing
-    // takes focus unless the user has already put it in a pane.
+    // takes focus unless the user has already put it in a pane. Then starts Ghidra on the
+    // binary again to make the user's edits; closing the binary stops it.
     fn analyzed(
         &mut self,
         generation: u64,
@@ -634,13 +656,18 @@ impl Reve {
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
-                Analysis::Done(Panes {
+                let cancellation = CancellationToken::new();
+                self.analysis_cancellation = Some(cancellation.clone());
+                let ghidra = Ghidra::start(path, cancellation, cx);
+                Analysis::Done(Box::new(Panes {
                     symbols,
                     listing,
                     decompile,
                     functions,
+                    _ghidra: cx.observe(&ghidra, |_, _, cx| cx.notify()),
+                    ghidra,
                     _history: history,
-                })
+                }))
             }
         };
         cx.notify();
@@ -708,7 +735,7 @@ impl Reve {
         let palette = Palette::of(cx);
         let theme = cx.theme();
         let panes = match &workspace.analysis {
-            Analysis::Done(panes) => Some(panes),
+            Analysis::Done(panes) => Some(&**panes),
             _ => None,
         };
         // A pane's view under its header, or a note until the analysis is done. Each view is
@@ -795,6 +822,12 @@ impl Reve {
                     listing.update(cx, Listing::forward);
                 }
             }))
+            .on_action(cx.listener(|this, _: &RenameFunction, window, cx| {
+                if let Some(panes) = this.panes() {
+                    let (listing, ghidra) = (panes.listing.clone(), panes.ghidra.clone());
+                    rename::open(listing, ghidra, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.header.update(cx, |header, cx| {
                     header.sidebar_open = !header.sidebar_open;
@@ -848,6 +881,25 @@ impl Reve {
                                         .flex_none()
                                         .child(format!("{} functions", program.functions.len())),
                                 )
+                                .map(|footer| match panes.ghidra.read(cx).status() {
+                                    ghidra::Status::Ready => footer,
+                                    ghidra::Status::Starting => footer
+                                        .child(
+                                            Spinner::new().with_size(px(12.)).color(palette.fg_3),
+                                        )
+                                        .child(line("Starting Ghidra for edits…".into())),
+                                    ghidra::Status::Editing(doing) => footer
+                                        .child(
+                                            Spinner::new().with_size(px(12.)).color(palette.fg_3),
+                                        )
+                                        .child(line(format!("{doing}…").into())),
+                                    ghidra::Status::Edited(said) => {
+                                        footer.children(said.iter().cloned().map(line))
+                                    }
+                                    ghidra::Status::Failed(why) => {
+                                        footer.child(line(why.clone()).text_color(theme.danger))
+                                    }
+                                })
                         }
                         Analysis::Failed(why) => footer.child(line(why.clone())),
                     }),
@@ -891,6 +943,7 @@ fn main() {
             key("secondary-k", ShowCommands, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
             KeyBinding::new("g", GoTo, Some(WORKSPACE)),
+            KeyBinding::new("l", RenameFunction, Some(WORKSPACE)),
         ];
         cx.bind_keys(keys);
 
