@@ -10,8 +10,8 @@ use std::{
     fs::File,
     io::{self, Read, Write},
     net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
-    path::Path,
-    process::{Child, ExitStatus, Stdio},
+    path::{Path, PathBuf},
+    process::{self, Child, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -45,6 +45,8 @@ pub struct GhidraSession {
     stream: TcpStream,
     // Taken when the session ends.
     child: Option<Child>,
+    // The saved export each edit is written into, when saved analyses are on.
+    saved: Option<PathBuf>,
 }
 
 /// Why an edit wasn't made.
@@ -69,10 +71,12 @@ impl std::error::Error for EditError {}
 
 impl GhidraSession {
     /// Start Ghidra on the analyzed project in `project` and return once
-    /// `Serve.java` has connected back.
+    /// `Serve.java` has connected back. Edits are written into the saved
+    /// export at `saved` too, so the next analysis loads them without Ghidra.
     pub(crate) fn start(
         config: &GhidraConfig,
         project: &Path,
+        saved: Option<PathBuf>,
         cancellation: &CancellationToken,
     ) -> Result<Self, ParserError> {
         let listener =
@@ -115,6 +119,7 @@ impl GhidraSession {
                         return Ok(Self {
                             stream,
                             child: Some(child),
+                            saved,
                         });
                     }
                 }
@@ -150,7 +155,15 @@ impl GhidraSession {
         self.stream
             .write_all(&edit_into_wire(edit).encode_length_delimited_to_vec())
             .map_err(EditError::Lost)?;
-        let changes = read_delimited(&mut self.stream).map_err(EditError::Lost)?;
+        let changes: wire::Changes = read_delimited(&mut self.stream).map_err(EditError::Lost)?;
+        if changes.error.is_none()
+            && let Some(saved) = &self.saved
+            && save_changes(saved, &changes).is_err()
+        {
+            // A saved export without the edit would load a stale program; without it, the next
+            // analysis exports the project again.
+            let _ = fs::remove_file(saved);
+        }
         changes_into_model(changes).map_err(EditError::Refused)
     }
 
@@ -175,6 +188,50 @@ impl Drop for GhidraSession {
             thread::spawn(move || wait(child));
         }
     }
+}
+
+/// Write what an edit changed into the saved export at `path`.
+// ponytail: rewrites the whole export per edit; keep a log of edits beside it if that gets slow.
+fn save_changes(path: &Path, changes: &wire::Changes) -> io::Result<()> {
+    let mut program = wire::Program::decode(fs::read(path)?.as_slice())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    for change in &changes.functions {
+        if let Ok(ix) = program
+            .functions
+            .binary_search_by_key(&change.entry, |function| function.entry)
+        {
+            let function = &mut program.functions[ix];
+            function.name.clone_from(&change.name);
+            function.decompilation.clone_from(&change.decompilation);
+        }
+    }
+    for comment in &changes.comments {
+        let instruction = program
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.instructions)
+            .find(|instruction| instruction.address == comment.address);
+        if let Some(instruction) = instruction {
+            instruction.comment = (!comment.text.is_empty()).then(|| comment.text.clone());
+        }
+    }
+    for bookmark in &changes.bookmarks {
+        match (
+            program.bookmarks.binary_search(&bookmark.address),
+            bookmark.on,
+        ) {
+            (Err(ix), true) => program.bookmarks.insert(ix, bookmark.address),
+            (Ok(ix), false) => {
+                program.bookmarks.remove(ix);
+            }
+            _ => {}
+        }
+    }
+    let temporary = path.with_extension(format!("{}.edit", process::id()));
+    fs::write(&temporary, program.encode_to_vec())?;
+    fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = fs::remove_file(&temporary);
+    })
 }
 
 /// `stream` once it has sent `token` and a newline, ready for edits.
@@ -352,8 +409,24 @@ mod tests {
             ],
         );
 
-        let mut session =
-            GhidraSession::start(&config, &project, &CancellationToken::new()).unwrap();
+        let saved = temp.path().join("saved.pb");
+        let program = wire::Program {
+            functions: vec![wire::Function {
+                name: "FUN_00001000".into(),
+                entry: 0x1000,
+                ..wire::Function::default()
+            }],
+            ..wire::Program::default()
+        };
+        fs::write(&saved, program.encode_to_vec()).unwrap();
+
+        let mut session = GhidraSession::start(
+            &config,
+            &project,
+            Some(saved.clone()),
+            &CancellationToken::new(),
+        )
+        .unwrap();
         let renamed = session.edit(&rename).unwrap();
         let refused = session.edit(&Edit::Comment {
             address: Address(0x1002),
@@ -370,6 +443,11 @@ mod tests {
         assert!(status.success(), "Ghidra exits once the session closes");
         let edits = ghidra.join().unwrap();
         assert_eq!(edits[0], edit_into_wire(&rename));
+        assert_eq!(
+            crate::export::read_export(&saved).unwrap().functions[0].name,
+            "parse",
+            "the saved export holds the edit"
+        );
         let args = fs::read_to_string(temp.path().join("args")).unwrap();
         let args: Vec<_> = args.lines().collect();
         assert_eq!(
@@ -386,10 +464,99 @@ mod tests {
     }
 
     #[test]
+    fn save_changes_writes_names_decompilations_comments_and_bookmarks() {
+        let temp = TempDirectory::new("session-save-changes").unwrap();
+        let saved = temp.path().join("saved.pb");
+        let instruction = |address| wire::Instruction {
+            address,
+            ..wire::Instruction::default()
+        };
+        let program = wire::Program {
+            functions: vec![
+                wire::Function {
+                    name: "FUN_00001000".into(),
+                    entry: 0x1000,
+                    instructions: vec![instruction(0x1000), instruction(0x1004)],
+                    ..wire::Function::default()
+                },
+                wire::Function {
+                    name: "FUN_00002000".into(),
+                    entry: 0x2000,
+                    instructions: vec![instruction(0x2000)],
+                    ..wire::Function::default()
+                },
+            ],
+            bookmarks: vec![0x1000],
+            ..wire::Program::default()
+        };
+        fs::write(&saved, program.encode_to_vec()).unwrap();
+        let decompilation = wire::Decompilation {
+            signature: "void parse(void)".into(),
+            ..wire::Decompilation::default()
+        };
+
+        save_changes(
+            &saved,
+            &wire::Changes {
+                functions: vec![wire::Function {
+                    name: "parse".into(),
+                    entry: 0x2000,
+                    decompilation: Some(decompilation),
+                    ..wire::Function::default()
+                }],
+                comments: vec![wire::Comment {
+                    address: 0x1004,
+                    text: "checks the magic".into(),
+                }],
+                bookmarks: vec![
+                    wire::Bookmark {
+                        address: 0x1000,
+                        on: false,
+                    },
+                    wire::Bookmark {
+                        address: 0x2000,
+                        on: true,
+                    },
+                ],
+                ..wire::Changes::default()
+            },
+        )
+        .unwrap();
+
+        let program = crate::export::read_export(&saved).unwrap();
+        assert_eq!(program.functions[0].name, "FUN_00001000");
+        assert_eq!(program.functions[1].name, "parse");
+        assert_eq!(
+            program.functions[1]
+                .decompilation
+                .as_ref()
+                .unwrap()
+                .signature,
+            "void parse(void)"
+        );
+        assert_eq!(
+            program.functions[1].instructions.len(),
+            1,
+            "instructions stay"
+        );
+        assert_eq!(
+            program.functions[0].instructions[1].comment.as_deref(),
+            Some("checks the magic")
+        );
+        assert_eq!(program.bookmarks, [Address(0x2000)]);
+        assert_eq!(
+            fs::read_dir(temp.path()).unwrap().count(),
+            1,
+            "no temporary file is left"
+        );
+    }
+
+    #[test]
     fn start_reports_a_ghidra_that_exits_before_connecting() {
         let (_temp, config, project) = setup("fail");
 
-        let error = GhidraSession::start(&config, &project, &CancellationToken::new()).unwrap_err();
+        let error =
+            GhidraSession::start(&config, &project, None, &CancellationToken::new()).unwrap_err();
 
         match error {
             ParserError::GhidraFailed { status, stdout, .. } => {
@@ -413,15 +580,16 @@ mod tests {
         assert!(matches!(error, ParserError::NotAnalyzed(_)), "{error:?}");
     }
 
-    /// Edits a real binary with real Ghidra, then checks a fresh export from
-    /// the project holds them.
+    /// Edits a real binary with real Ghidra, then checks both the saved export
+    /// and a fresh export from the project hold the edits.
     #[test]
     #[ignore = "runs the Ghidra from scripts/bootstrap.py for about a minute"]
     fn real_ghidra_makes_and_saves_edits() {
         let temp = TempDirectory::new("session-real").unwrap();
         let mut config = GhidraConfig::from_environment();
         config.projects_dir = temp.path().join("projects");
-        config.cache_dir = None;
+        let cache = temp.path().join("cache");
+        config.cache_dir = Some(cache.clone());
         let input = Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../.tools/ghidra/ghidra_12.2_PUBLIC/GPL/DemanglerGnu/os/linux_x86_64/demangler_gnu_v2_41",
         );
@@ -511,17 +679,21 @@ mod tests {
             .unwrap();
         assert!(session.close().unwrap().success());
 
-        let saved = adapter.analyze(&input).unwrap();
-        let function = saved
-            .functions
-            .iter()
-            .find(|function| function.entry == callee.entry)
-            .unwrap();
-        assert_eq!(function.name, "reve_saved");
-        assert_eq!(
-            function.instructions[0].comment.as_deref(),
-            Some("checks the magic")
-        );
-        assert!(saved.bookmarks.contains(&at));
+        let check = |program: reve_model::Program| {
+            let function = program
+                .functions
+                .iter()
+                .find(|function| function.entry == callee.entry)
+                .unwrap();
+            assert_eq!(function.name, "reve_saved");
+            assert_eq!(
+                function.instructions[0].comment.as_deref(),
+                Some("checks the magic")
+            );
+            assert!(program.bookmarks.contains(&at));
+        };
+        check(adapter.analyze(&input).unwrap());
+        fs::remove_dir_all(cache).unwrap();
+        check(adapter.analyze(&input).unwrap());
     }
 }

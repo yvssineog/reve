@@ -116,7 +116,9 @@ force a fresh export, and the binary's project to force a fresh analysis.
 later. Each `edit` renames a function, sets an end-of-line comment, or adds or
 removes a Note bookmark. Ghidra makes the edit in its own transaction, saves the
 project, decompiles again every function whose C shows a new name, and answers
-with what changed, or with its reason for refusing the edit. Dropping or closing
+with what changed, or with its reason for refusing the edit. The adapter writes
+those changes into the binary's saved export too, so reopening it loads the
+edited program without Ghidra. Dropping or closing
 the session closes its connection, and Ghidra exits. Ghidra's output for the
 session goes to `session.log` beside the project.
 

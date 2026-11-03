@@ -163,7 +163,8 @@ impl GhidraAdapter {
         if !analyzed(&project) {
             return Err(ParserError::NotAnalyzed(input));
         }
-        GhidraSession::start(&self.config, &project, cancellation)
+        let saved = self.saved_export(&input, &digest);
+        GhidraSession::start(&self.config, &project, saved, cancellation)
     }
 
     /// The directory of the Ghidra project for the binary whose bytes hash to `digest`.
