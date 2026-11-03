@@ -18,6 +18,10 @@ message Program {
 
   // Functions recognized or imported by the analysis engine.
   repeated Function functions = 5;
+
+  // Ascending addresses of the user's bookmarks: Ghidra's Note bookmarks, not
+  // the ones its analysis adds.
+  repeated uint64 bookmarks = 6;
 }
 
 // A function recognized by the analysis engine.
@@ -105,4 +109,7 @@ message Instruction {
 
   // Original instruction bytes.
   bytes bytes = 5;
+
+  // End-of-line comment, when the instruction has one.
+  optional string comment = 6;
 }

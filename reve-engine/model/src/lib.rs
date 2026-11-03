@@ -20,6 +20,8 @@ pub struct Program {
     pub address_size_bits: u32,
     /// Functions discovered or imported by the analysis engine.
     pub functions: Vec<Function>,
+    /// The user's bookmarks, ascending.
+    pub bookmarks: Vec<Address>,
 }
 
 /// A function recognized by the analysis engine.
@@ -110,4 +112,6 @@ pub struct Instruction {
     pub operands: String,
     /// Original instruction bytes.
     pub bytes: Vec<u8>,
+    /// End-of-line comment, when the instruction has one.
+    pub comment: Option<String>,
 }

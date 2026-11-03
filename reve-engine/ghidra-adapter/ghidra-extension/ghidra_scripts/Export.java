@@ -10,6 +10,9 @@ import ghidra.app.decompiler.component.DecompilerUtils;
 import ghidra.app.decompiler.parallel.ParallelDecompiler;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkType;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Instruction;
@@ -28,6 +31,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
@@ -92,7 +96,17 @@ public class Export extends GhidraScript {
 				: failedDecompilation(decompilerOpenError);
 			result.addFunctions(collectFunction(function, listing, defaultSpace, decompilation));
 		}
-		return result.build();
+		return result.addAllBookmarks(bookmarks(program)).build();
+	}
+
+	// The addresses of the user's Note bookmarks, ascending.
+	private TreeSet<Long> bookmarks(Program program) {
+		TreeSet<Long> addresses = new TreeSet<>(Long::compareUnsigned);
+		Iterator<Bookmark> notes = program.getBookmarkManager().getBookmarksIterator(BookmarkType.NOTE);
+		while (notes.hasNext()) {
+			addresses.add(notes.next().getAddress().getUnsignedOffset());
+		}
+		return addresses;
 	}
 
 	private String openDecompiler(DecompInterface decompiler, Program program) {
@@ -280,12 +294,16 @@ public class Export extends GhidraScript {
 			operands.append(instruction.getDefaultOperandRepresentation(index));
 		}
 
-		return Engine.Instruction.newBuilder()
+		Engine.Instruction.Builder result = Engine.Instruction.newBuilder()
 			.setAddress(instruction.getAddress().getUnsignedOffset())
 			.setSize(instruction.getLength())
 			.setMnemonic(instruction.getMnemonicString())
 			.setOperands(operands.toString())
-			.setBytes(ByteString.copyFrom(instruction.getBytes()))
-			.build();
+			.setBytes(ByteString.copyFrom(instruction.getBytes()));
+		String comment = instruction.getComment(CommentType.EOL);
+		if (comment != null) {
+			result.setComment(comment);
+		}
+		return result.build();
 	}
 }

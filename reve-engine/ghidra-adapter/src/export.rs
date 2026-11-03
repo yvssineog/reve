@@ -68,6 +68,7 @@ pub fn into_model(message: wire::Program) -> Program {
             .into_iter()
             .map(function_into_model)
             .collect(),
+        bookmarks: message.bookmarks.into_iter().map(Address).collect(),
     }
 }
 
@@ -138,6 +139,7 @@ fn instruction_into_model(message: wire::Instruction) -> Instruction {
         mnemonic: message.mnemonic,
         operands: message.operands,
         bytes: message.bytes,
+        comment: message.comment,
     }
 }
 
@@ -163,9 +165,11 @@ mod tests {
                     mnemonic: "mov".into(),
                     operands: "rax, rbx".into(),
                     bytes: vec![0x48, 0x89],
+                    comment: None,
                 }],
                 decompilation: None,
             }],
+            bookmarks: Vec::new(),
         }
     }
 
@@ -202,6 +206,21 @@ mod tests {
         );
         assert_eq!(model.functions[0].instructions[0].bytes, [0x48, 0x89]);
         assert!(model.functions[0].decompilation.is_none());
+    }
+
+    #[test]
+    fn into_model_keeps_comments_and_bookmarks() {
+        let mut message = sample_message();
+        message.functions[0].instructions[0].comment = Some("checks the magic".into());
+        message.bookmarks = vec![0x1000, u64::MAX - 1];
+
+        let model = into_model(message);
+
+        assert_eq!(
+            model.functions[0].instructions[0].comment.as_deref(),
+            Some("checks the magic")
+        );
+        assert_eq!(model.bookmarks, [Address(0x1000), Address(u64::MAX - 1)]);
     }
 
     #[test]

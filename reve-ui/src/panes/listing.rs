@@ -513,6 +513,7 @@ mod tests {
                 mnemonic: mnemonic.into(),
                 operands: operands.into(),
                 bytes: vec![0; 4],
+                comment: None,
             })
             .collect();
         Function {
@@ -539,6 +540,7 @@ mod tests {
                 function("helper", 0x1010, &[("mov", "x0, #0x1"), ("bl", "0x2000")]),
                 function("leaf", 0x1020, &[("ret", "")]),
             ],
+            bookmarks: Vec::new(),
         }
     }
 
