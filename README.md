@@ -43,16 +43,25 @@ Run `cargo run -p reve-ui` to start the GPUI application. Opening a binary analy
 
 Press `I` on the empty screen to pick a binary. Once Ghidra finishes, the workspace shows:
 
-- Listing: every function's instructions with address, bytes, mnemonic and operands. Arrows or `j`/`k` step one instruction, page keys a page, `ctrl-d`/`ctrl-u` half a screen, and `enter` follows a call.
+- Listing: every function's instructions with address, bytes, mnemonic, operands and end-of-line comment. Arrows or `j`/`k` step one instruction, page keys a page, `ctrl-d`/`ctrl-u` half a screen, and `enter` follows a call. A bar in the gutter marks a bookmark.
 - Decompile: the cursor's function as Ghidra's C, colored by Ghidra's syntax classes. The lines the cursor's instruction became are marked and scrolled into view, and pressing a line moves the cursor to its instruction.
 - Symbol Tree: every function by name. Unnamed `FUN_<address>` ones stay muted.
 - Functions: every function in address order with its address, decompiled signature and size.
+- Bookmarks, in a tab beside Functions: every bookmarked instruction with its function and comment.
 
-Pressing a function in Symbol Tree or Functions takes every pane to it.
+Pressing a function in Symbol Tree or Functions, or a bookmark in Bookmarks, takes every pane to it.
 
 Press `G` or click the field at the top to go to an address or a function by name. An address between instructions lands on the next one. `⌘[` and `⌘]` walk back and forward through jumps: following a call, picking a function, or going somewhere with Go To. Stepping through instructions doesn't count as a jump.
 
 Press `⌘K` for every command on the current screen, with its shortcut. Type to narrow the list.
+
+### Annotate
+
+Ghidra makes every edit and saves it in the binary's Ghidra project, so edits are still there the next time the binary opens. After the analysis, the footer says "Starting Ghidra for edits…" for a few seconds. Edits wait until it's gone.
+
+- `L` renames the function the cursor's instruction calls, or else the function the cursor is in. Ghidra then decompiles every function that shows the name again, and the footer counts them. An empty name gives back Ghidra's `FUN_<address>` name. If Ghidra refuses a name, the dialog says why.
+- `;` opens a field on the cursor's instruction for its end-of-line comment. `enter` saves it, `esc` leaves it as it was, and an empty field removes it.
+- `⌘D` bookmarks the cursor's instruction, or removes its bookmark.
 
 ## TODO
 
@@ -62,7 +71,7 @@ Press `⌘K` for every command on the current screen, with its shortcut. Type to
 - Function namespaces
 - Imports, by library
 - Calls to imported functions
-- End-of-line comments and the strings instructions load
+- The strings instructions load
 - The program's start address
 
 The Listing doesn't show function signatures yet, though the Functions window does.
