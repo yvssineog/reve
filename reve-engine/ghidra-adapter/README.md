@@ -97,9 +97,35 @@ that directory when parsing finishes.
 Each decoded export is also saved in the user's cache directory
 (`~/Library/Caches/rêve/analyses/` on macOS). A binary analyzed before loads
 from there without running Ghidra. The key hashes the binary's name and bytes,
-`Export.java`, `engine.proto`, the installed extension jar and the Ghidra
+`Export.java`, `DecompilerPool.java`, `engine.proto`, the installed extension jar and the Ghidra
 version, so changing the exporter or schema, reinstalling the extension, or
 upgrading Ghidra runs a fresh analysis. Delete that directory to force one.
+
+## Test the exporter
+
+`developer_scripts/` isn't packaged into the extension. Run these commands from
+`ghidra-extension/`, with a JDK on your `PATH`.
+
+`DecompilerPoolTest` needs no Ghidra, and CI runs it:
+
+```sh
+javac -d /tmp/decompiler-pool ghidra_scripts/DecompilerPool.java developer_scripts/DecompilerPoolTest.java
+java -cp /tmp/decompiler-pool DecompilerPoolTest
+```
+
+`ExportFaultTest` makes one decompilation throw, then checks that the export
+keeps every other function and all instructions. It needs real Ghidra, so CI
+doesn't run it. Ghidra compiles each script directory on its own, so the test
+needs a directory that also holds the scripts it extends:
+
+```sh
+scripts=$(mktemp -d)
+cp ghidra_scripts/Export.java ghidra_scripts/DecompilerPool.java developer_scripts/ExportFaultTest.java "$scripts"
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$(mktemp -d)" Test -import <binary> \
+  -scriptPath "$scripts" -postScript ExportFaultTest.java "$(mktemp -d)/out.pb"
+```
+
+It passes when the log prints `EXPORT_FAULT_OK`.
 
 Generated Java files, downloaded dependencies, Gradle caches, and the packaged
 extension are build artifacts; do not edit or commit them. The Rust adapter

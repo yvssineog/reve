@@ -19,6 +19,10 @@ const EXPORT_SCRIPT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/ghidra-extension/ghidra_scripts/Export.java"
 ));
+const DECOMPILER_POOL: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/ghidra-extension/ghidra_scripts/DecompilerPool.java"
+));
 const SCHEMA: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../proto/engine.proto"
@@ -138,6 +142,7 @@ impl GhidraAdapter {
             .chain_update(Sha256::digest(input.file_name()?.as_encoded_bytes()))
             .chain_update(binary.finalize())
             .chain_update(Sha256::digest(EXPORT_SCRIPT))
+            .chain_update(Sha256::digest(DECOMPILER_POOL))
             .chain_update(Sha256::digest(SCHEMA))
             .chain_update(Sha256::digest(extension))
             .chain_update(version)
