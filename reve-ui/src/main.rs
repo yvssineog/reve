@@ -133,6 +133,8 @@ struct RemoveRecentBinary {
 // The open workspace's key context. Its one-letter shortcuts stop at dialogs over it, so
 // typing in them still types.
 const WORKSPACE: &str = "Workspace";
+// The same, while no field in it has the keyboard, so typing in one types.
+const LETTERS: &str = "Workspace && !Input";
 
 // The main view: the empty screen until a binary is open, then header, body, footer
 // stacked top to bottom.
@@ -518,11 +520,18 @@ impl Reve {
                         command(glyph("caret-left"), "Go back", Box::new(GoBack)),
                         command(glyph("caret-right"), "Go forward", Box::new(GoForward)),
                     ];
-                    annotate.push(command(
-                        glyph("function-duotone"),
-                        "Rename function",
-                        Box::new(RenameFunction),
-                    ));
+                    annotate.extend([
+                        command(
+                            glyph("function-duotone"),
+                            "Rename function",
+                            Box::new(RenameFunction),
+                        ),
+                        command(
+                            glyph("cpu-duotone"),
+                            "Comment instruction",
+                            Box::new(panes::listing::Comment),
+                        ),
+                    ]);
                 }
                 let header = self.header.read(cx);
                 view.extend([
@@ -639,7 +648,10 @@ impl Reve {
                 Analysis::Failed(format!("Ghidra found no code in {name}").into())
             }
             Ok(program) => {
-                let listing = cx.new(|cx| Listing::new(program, cx));
+                let cancellation = CancellationToken::new();
+                self.analysis_cancellation = Some(cancellation.clone());
+                let ghidra = Ghidra::start(path, cancellation, cx);
+                let listing = cx.new(|cx| Listing::new(program, ghidra.clone(), cx));
                 let symbols = cx.new(|cx| Symbols::new(listing.clone(), cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
                 let functions = cx.new(|cx| Functions::new(listing.clone(), cx));
@@ -656,9 +668,6 @@ impl Reve {
                 if self.focus.is_focused(window) {
                     window.focus(&listing.focus_handle(cx), cx);
                 }
-                let cancellation = CancellationToken::new();
-                self.analysis_cancellation = Some(cancellation.clone());
-                let ghidra = Ghidra::start(path, cancellation, cx);
                 Analysis::Done(Box::new(Panes {
                     symbols,
                     listing,
@@ -942,8 +951,8 @@ fn main() {
             key("secondary-]", GoForward, cx),
             key("secondary-k", ShowCommands, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
-            KeyBinding::new("g", GoTo, Some(WORKSPACE)),
-            KeyBinding::new("l", RenameFunction, Some(WORKSPACE)),
+            KeyBinding::new("g", GoTo, Some(LETTERS)),
+            KeyBinding::new("l", RenameFunction, Some(LETTERS)),
         ];
         cx.bind_keys(keys);
 

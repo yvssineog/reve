@@ -72,9 +72,14 @@ impl Ghidra {
         cx.notify();
     }
 
+    // Whether Ghidra can take an edit now: it has opened the binary and isn't making another.
+    pub fn ready(&self) -> bool {
+        self.session.is_some()
+    }
+
     // Has Ghidra make `edit` off the main thread, then shows what it changed in `listing`. Fails
     // at once, saying why, while Ghidra is starting, busy or gone; otherwise the status says how
-    // it went.
+    // it went. Reads nothing from `listing` yet, so the listing can ask for edits itself.
     pub fn edit(
         &mut self,
         edit: Edit,
@@ -89,7 +94,7 @@ impl Ghidra {
                 Status::Ready | Status::Edited(_) => "Ghidra can't make edits.".into(),
             });
         };
-        self.status = Status::Editing(doing(&edit, listing.read(cx).program()));
+        self.status = Status::Editing(doing(&edit));
         cx.notify();
         let made = cx.background_spawn(async move {
             let changes = session.edit(&edit);
@@ -147,9 +152,10 @@ fn name(program: &Program, entry: Address) -> &str {
 }
 
 // What making `edit` reads as.
-fn doing(edit: &Edit, program: &Program) -> SharedString {
+fn doing(edit: &Edit) -> SharedString {
     match edit {
-        Edit::Rename { entry, .. } => format!("Renaming {}", name(program, *entry)).into(),
+        Edit::Rename { name, .. } if name.is_empty() => "Giving back Ghidra's name".into(),
+        Edit::Rename { name, .. } => format!("Renaming to {name}").into(),
         Edit::Comment { .. } => "Saving the comment".into(),
         Edit::Bookmark { .. } => "Saving the bookmark".into(),
     }
