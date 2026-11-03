@@ -264,6 +264,40 @@ impl Listing {
         !self.history.forward.is_empty()
     }
 
+    // The instruction at `address` and its function.
+    pub fn at(&self, address: Address) -> Option<(&Function, &Instruction)> {
+        row_at(&self.addresses, address).map(|ix| self.code(ix))
+    }
+
+    // What `instruction`'s operands read as: the function a call names, or else the operands.
+    pub fn operands<'a>(&'a self, instruction: &'a Instruction) -> &'a str {
+        callee(&self.program, instruction).map_or(&instruction.operands, |function| &function.name)
+    }
+
+    pub fn bookmarked(&self, address: Address) -> bool {
+        self.program.bookmarks.binary_search(&address).is_ok()
+    }
+
+    // Has Ghidra bookmark the cursor's instruction, or take its bookmark off, once Ghidra can.
+    // Until then the footer says why not.
+    pub fn toggle_bookmark(&mut self, cx: &mut Context<Self>) {
+        if !self.ghidra.read(cx).ready() {
+            return;
+        }
+        let address = self.address();
+        let edit = Edit::Bookmark {
+            address,
+            on: !self.bookmarked(address),
+        };
+        let listing = cx.entity();
+        if let Err(why) = self
+            .ghidra
+            .update(cx, |ghidra, cx| ghidra.edit(edit, listing, cx))
+        {
+            eprintln!("bookmarking: {why}");
+        }
+    }
+
     // The instruction at `address`, or else the first one after it, and its function.
     pub fn at_or_after(&self, address: Address) -> Option<(&Function, &Instruction)> {
         row_from(&self.addresses, address).map(|ix| self.code(ix))
@@ -418,7 +452,7 @@ impl Listing {
         (function, &function.instructions[instruction])
     }
 
-    // Row `ix`, inset by the gutter, which will hold bookmarks.
+    // Row `ix`, inset by the gutter, which marks bookmarks.
     fn row(&self, ix: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match &self.rows[ix] {
             Row::Gap => h_flex()
@@ -493,9 +527,19 @@ impl Listing {
             columns.push(&comment, comment.chars().count(), palette.comment);
         }
 
-        let row = h_flex().id(ix).w_full().h(ROW).px(GUTTER);
+        let row = h_flex().id(ix).relative().w_full().h(ROW).px(GUTTER);
         pressable(row, ix == self.cursor, palette)
             .whitespace_nowrap()
+            .children(self.bookmarked(instruction.address).then(|| {
+                div()
+                    .absolute()
+                    .left(px(4.))
+                    .top(px(3.))
+                    .w(px(3.))
+                    .h(ROW - px(6.))
+                    .rounded(px(1.5))
+                    .bg(palette.comment)
+            }))
             .child(columns.text())
             // The field is a little taller than a row; centered, its text sits on the row's line.
             .children(field.map(|field| {

@@ -32,11 +32,12 @@ use hud::Hud;
 use logo::Logo;
 use menu::Section;
 use palette::Palette;
+use panes::bookmarks::Bookmarks;
 use panes::decompile::Decompile;
 use panes::functions::Functions;
 use panes::listing::Listing;
 use panes::symbols::Symbols;
-use panes::{note, pane};
+use panes::{note, pane, tab, tabbed};
 use recent::RecentStore;
 
 // Icons bundled into the binary: Phosphor (MIT), the set the Electron build uses,
@@ -66,7 +67,8 @@ const ICONS: &[(&str, &[u8])] = icons![
     "gauge-duotone",
     "sign-out-duotone",
     "panel-open",
-    "panel-closed"
+    "panel-closed",
+    "bookmark-simple-duotone"
 ];
 
 // gpui-kit's default assets plus our icons.
@@ -113,6 +115,7 @@ actions!(
         GoBack,
         GoForward,
         RenameFunction,
+        ToggleBookmark,
         ShowCommands
     ]
 );
@@ -152,6 +155,14 @@ struct Reve {
     _recent_files: Subscription,
     // Frame stats on the top bar, when shown.
     hud: Option<Hud>,
+    // The view the bottom pane shows.
+    bottom: Bottom,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Bottom {
+    Functions,
+    Bookmarks,
 }
 
 // The animated logo until a binary is open, then the workspace showing it. Opening one
@@ -184,6 +195,7 @@ struct Panes {
     listing: Entity<Listing>,
     decompile: Entity<Decompile>,
     functions: Entity<Functions>,
+    bookmarks: Entity<Bookmarks>,
     // Makes the user's edits.
     ghidra: Entity<Ghidra>,
     // Lights the header's Back and Forward while the listing has jumps to walk.
@@ -212,6 +224,7 @@ impl Reve {
             _recent_files: recent_files,
             // Shown in debug builds; secondary-alt-p toggles them in any build.
             hud: cfg!(debug_assertions).then(Hud::default),
+            bottom: Bottom::Functions,
         };
         if let Some(binary) = initial_binary {
             this.open(binary, window, cx);
@@ -532,6 +545,17 @@ impl Reve {
                             Box::new(panes::listing::Comment),
                         ),
                     ]);
+                    let listing = self.listing().map(|listing| listing.read(cx));
+                    let bookmarked = listing.is_some_and(|l| l.bookmarked(l.address()));
+                    annotate.push(command(
+                        glyph("bookmark-simple-duotone"),
+                        if bookmarked {
+                            "Remove bookmark"
+                        } else {
+                            "Bookmark instruction"
+                        },
+                        Box::new(ToggleBookmark),
+                    ));
                 }
                 let header = self.header.read(cx);
                 view.extend([
@@ -655,6 +679,7 @@ impl Reve {
                 let symbols = cx.new(|cx| Symbols::new(listing.clone(), cx));
                 let decompile = cx.new(|cx| Decompile::new(listing.clone(), cx));
                 let functions = cx.new(|cx| Functions::new(listing.clone(), cx));
+                let bookmarks = cx.new(|cx| Bookmarks::new(listing.clone(), cx));
                 let history = cx.observe(&listing, |this, listing, cx| {
                     let listing = listing.read(cx);
                     let walkable = (listing.can_go_back(), listing.can_go_forward());
@@ -673,6 +698,7 @@ impl Reve {
                     listing,
                     decompile,
                     functions,
+                    bookmarks,
                     _ghidra: cx.observe(&ghidra, |_, _, cx| cx.notify()),
                     ghidra,
                     _history: history,
@@ -802,12 +828,29 @@ impl Reve {
                     ),
                 )
                 .child(
-                    pane(theme, "function-duotone", palette.symbol, "Functions", None)
-                        .visible(bottom_open)
-                        .size(px(210.))
-                        .size_range(px(120.)..px(480.))
-                        .fixed()
-                        .child(body(|panes| panes.functions.clone().into())),
+                    tabbed(
+                        theme,
+                        [
+                            (Bottom::Functions, "function-duotone", "Functions"),
+                            (Bottom::Bookmarks, "bookmark-simple-duotone", "Bookmarks"),
+                        ]
+                        .map(|(view, glyph, title)| {
+                            tab(glyph, palette.symbol, title, self.bottom == view).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.bottom = view;
+                                    cx.notify();
+                                }),
+                            )
+                        }),
+                    )
+                    .visible(bottom_open)
+                    .size(px(210.))
+                    .size_range(px(120.)..px(480.))
+                    .fixed()
+                    .child(match self.bottom {
+                        Bottom::Functions => body(|panes| panes.functions.clone().into()),
+                        Bottom::Bookmarks => body(|panes| panes.bookmarks.clone().into()),
+                    }),
                 ),
         );
 
@@ -829,6 +872,11 @@ impl Reve {
             .on_action(cx.listener(|this, _: &GoForward, _, cx| {
                 if let Some(listing) = this.listing() {
                     listing.update(cx, Listing::forward);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleBookmark, _, cx| {
+                if let Some(listing) = this.listing() {
+                    listing.update(cx, Listing::toggle_bookmark);
                 }
             }))
             .on_action(cx.listener(|this, _: &RenameFunction, window, cx| {
@@ -950,6 +998,7 @@ fn main() {
             key("secondary-[", GoBack, cx),
             key("secondary-]", GoForward, cx),
             key("secondary-k", ShowCommands, cx),
+            key("secondary-d", ToggleBookmark, cx),
             KeyBinding::new("i", OpenBinary, Some(empty::CONTEXT)),
             KeyBinding::new("g", GoTo, Some(LETTERS)),
             KeyBinding::new("l", RenameFunction, Some(LETTERS)),

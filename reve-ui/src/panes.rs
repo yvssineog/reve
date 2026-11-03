@@ -1,3 +1,4 @@
+pub mod bookmarks;
 pub mod decompile;
 pub mod functions;
 pub mod listing;
@@ -20,14 +21,7 @@ pub fn pane(
     detail: Option<SharedString>,
 ) -> ResizablePanel {
     resizable_panel().flex_col().child(
-        h_flex()
-            .h(px(32.))
-            .flex_none()
-            .px_3()
-            .gap_2()
-            .text_xs()
-            .font_medium()
-            .text_color(theme.muted_foreground)
+        header(theme)
             .child(icon(glyph, px(14.)).text_color(hue))
             .child(title)
             // Detail reads quieter than the title, in the same font and size so baselines line up.
@@ -40,6 +34,40 @@ pub fn pane(
                     .child(detail)
             })),
     )
+}
+
+// A pane whose header holds tabs, one for each view its body can show.
+pub fn tabbed(theme: &Theme, tabs: impl IntoIterator<Item = Stateful<Div>>) -> ResizablePanel {
+    resizable_panel()
+        .flex_col()
+        .child(header(theme).gap_4().children(tabs))
+}
+
+// A tab: the view's glyph and title, quieter until picked.
+pub fn tab(glyph: &str, hue: Hsla, title: &'static str, picked: bool) -> Stateful<Div> {
+    let tab = h_flex()
+        .id(title)
+        .h_full()
+        .gap_2()
+        .child(icon(glyph, px(14.)).text_color(hue))
+        .child(title);
+    if picked {
+        tab
+    } else {
+        tab.opacity(0.5).hover(|tab| tab.opacity(0.8))
+    }
+}
+
+// A pane's header row, quiet and small.
+fn header(theme: &Theme) -> Div {
+    h_flex()
+        .h(px(32.))
+        .flex_none()
+        .px_3()
+        .gap_2()
+        .text_xs()
+        .font_medium()
+        .text_color(theme.muted_foreground)
 }
 
 // The body of a pane with nothing to show: a quiet note at the header's size, centered,

@@ -173,10 +173,18 @@ fn said(edit: &Edit, changes: &Changes, program: &Program) -> Vec<SharedString> 
             let now = now.map_or("", |change| &change.name);
             vec![format!("Renamed {} to {now}", name(program, *entry)).into()]
         }
-        Edit::Comment { text, .. } if text.is_empty() => vec!["Removed the comment".into()],
-        Edit::Comment { .. } => vec!["Saved the comment".into()],
-        Edit::Bookmark { on: true, .. } => vec!["Bookmarked".into()],
-        Edit::Bookmark { on: false, .. } => vec!["Removed the bookmark".into()],
+        Edit::Comment { address, text } if text.is_empty() => {
+            vec![format!("Removed the comment at {:08x}", address.0).into()]
+        }
+        Edit::Comment { address, .. } => {
+            vec![format!("Saved the comment at {:08x}", address.0).into()]
+        }
+        Edit::Bookmark { address, on: true } => {
+            vec![format!("Bookmarked {:08x}", address.0).into()]
+        }
+        Edit::Bookmark { address, on: false } => {
+            vec![format!("Removed the bookmark at {:08x}", address.0).into()]
+        }
     };
     let decompiled = changes
         .functions
@@ -240,7 +248,7 @@ mod tests {
         };
         assert_eq!(
             said(&bookmark, &Changes::default(), &program),
-            ["Bookmarked"]
+            ["Bookmarked 00001000"]
         );
     }
 }
