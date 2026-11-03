@@ -6,10 +6,14 @@ use std::{
 };
 
 use reve_model::Program;
-use sha2::{Digest, Sha256};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
-    CancellationToken, config::GhidraConfig, error::ParserError, export, headless::run_headless,
+    CancellationToken,
+    config::GhidraConfig,
+    error::ParserError,
+    export,
+    headless::{PROJECT_NAME, Source, run_headless},
     job::JobDirectory,
 };
 
@@ -48,10 +52,11 @@ impl GhidraAdapter {
     /// Analyze an input binary and return the shared `reve_model::Program`.
     ///
     /// A binary analyzed before loads from its saved export without running
-    /// Ghidra. Otherwise the analysis uses a unique temporary Ghidra project
-    /// directory. Ghidra imports and analyzes the input, then `Export.java`
-    /// writes a protobuf message there. Rust decodes that message and saves a
-    /// copy before the temporary directory is removed.
+    /// Ghidra. Otherwise Ghidra exports the binary's project, kept in the
+    /// projects directory under the hash of its bytes, without analyzing it
+    /// again. A binary with no project yet is imported and analyzed in a unique
+    /// temporary directory, whose project then moves into place. Rust decodes
+    /// the export and saves a copy before the temporary directory is removed.
     pub fn analyze(&self, input: impl AsRef<Path>) -> Result<Program, ParserError> {
         self.analyze_with_cancellation(input, &CancellationToken::new())
     }
@@ -80,7 +85,8 @@ impl GhidraAdapter {
 
         let input =
             fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
-        let saved = self.saved_export(&input);
+        let digest = digest(&input).map_err(|_| ParserError::InputNotFound(input.clone()))?;
+        let saved = self.saved_export(&input, &digest);
         if let Some(saved) = &saved
             && saved.is_file()
         {
@@ -95,10 +101,17 @@ impl GhidraAdapter {
 
         let job = JobDirectory::create(&self.config.projects_dir)?;
         let export_path = job.export_path();
+        let project = self.config.projects_dir.join(format!("{digest:x}"));
+        let analyzed = project.join(format!("{PROJECT_NAME}.gpr")).is_file();
+        let (location, source) = if analyzed {
+            (project.as_path(), Source::Saved)
+        } else {
+            (job.path(), Source::Import(&input))
+        };
 
         // `run_headless` returns only after Ghidra exits successfully. A
         // nonzero exit status and timeout are already represented as errors.
-        let _output = run_headless(&self.config, job.path(), &input, &export_path, cancellation)?;
+        let _output = run_headless(&self.config, location, source, &export_path, cancellation)?;
 
         if cancellation.is_cancelled() {
             return Err(ParserError::Cancelled);
@@ -121,6 +134,11 @@ impl GhidraAdapter {
                 let _ = fs::remove_file(&temporary);
             }
         }
+        // Best-effort like the saved export: the next analysis imports again
+        // when the project couldn't move.
+        if !analyzed && keep_project(job.path(), &project).is_err() {
+            let _ = fs::remove_dir_all(&project);
+        }
         Ok(program)
     }
 
@@ -130,17 +148,15 @@ impl GhidraAdapter {
     /// saved analyses are disabled, the input can't be read, or the version or
     /// extension can't be found, since a Ghidra upgrade or extension rebuild
     /// would then load stale entries.
-    fn saved_export(&self, input: &Path) -> Option<PathBuf> {
+    fn saved_export(&self, input: &Path, digest: &Digest) -> Option<PathBuf> {
         let cache_dir = self.config.cache_dir.as_ref()?;
         let launcher = fs::canonicalize(&self.config.analyze_headless).ok()?;
         let install = launcher.parent()?.parent()?;
         let version = ghidra_version(install)?;
         let extension = fs::read(install.join(EXTENSION_JAR)).ok()?;
-        let mut binary = Sha256::new();
-        io::copy(&mut fs::File::open(input).ok()?, &mut binary).ok()?;
         let key = Sha256::new()
             .chain_update(Sha256::digest(input.file_name()?.as_encoded_bytes()))
-            .chain_update(binary.finalize())
+            .chain_update(digest)
             .chain_update(Sha256::digest(EXPORT_SCRIPT))
             .chain_update(Sha256::digest(DECOMPILER_POOL))
             .chain_update(Sha256::digest(SCHEMA))
@@ -149,6 +165,26 @@ impl GhidraAdapter {
             .finalize();
         Some(cache_dir.join(format!("{key:x}.pb")))
     }
+}
+
+/// A SHA-256 of a binary's bytes.
+type Digest = sha2::digest::Output<Sha256>;
+
+/// The SHA-256 of the file at `path`.
+fn digest(path: &Path) -> io::Result<Digest> {
+    let mut hasher = Sha256::new();
+    io::copy(&mut fs::File::open(path)?, &mut hasher)?;
+    Ok(hasher.finalize())
+}
+
+/// Move the project Ghidra created in `job` to `project`. The `.gpr` file
+/// moves last, so a project directory holding one is complete.
+fn keep_project(job: &Path, project: &Path) -> io::Result<()> {
+    fs::create_dir_all(project)?;
+    for entry in [format!("{PROJECT_NAME}.rep"), format!("{PROJECT_NAME}.gpr")] {
+        fs::rename(job.join(&entry), project.join(&entry))?;
+    }
+    Ok(())
 }
 
 /// `application.version` of the Ghidra install at `install`.
@@ -223,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn analyze_runs_headless_decodes_program_and_cleans_up() {
+    fn analyze_keeps_the_ghidra_project_and_removes_the_rest() {
         let (_temp, config, input) = setup("write");
         let adapter = GhidraAdapter::new(config.clone());
 
@@ -231,7 +267,34 @@ mod tests {
 
         assert_eq!(program.name, "demo");
         assert!(program.functions.is_empty());
-        assert_projects_clean(&config);
+        let project = config
+            .projects_dir
+            .join(format!("{:x}", digest(&input).unwrap()));
+        assert!(project.join("ReveAnalysis.gpr").is_file());
+        assert!(project.join("ReveAnalysis.rep").is_dir());
+        let entries = fs::read_dir(&config.projects_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(entries, [project], "the job directory is removed");
+    }
+
+    #[test]
+    fn analyze_exports_the_kept_project_without_importing_again() {
+        let (_temp, config, input) = setup("write");
+        let launches_log = config.analyze_headless.with_file_name("launches");
+        let cache = config.cache_dir.clone().unwrap();
+        let adapter = GhidraAdapter::new(config);
+
+        adapter.analyze(&input).unwrap();
+        fs::remove_dir_all(cache).unwrap();
+        adapter.analyze(&input).unwrap();
+
+        let launches = fs::read_to_string(launches_log).unwrap();
+        assert_eq!(
+            launches.lines().collect::<Vec<_>>(),
+            ["-import", "-process"]
+        );
     }
 
     #[test]

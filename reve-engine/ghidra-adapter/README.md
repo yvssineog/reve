@@ -90,16 +90,24 @@ cargo run -p reve-ghidra-adapter --bin reve-parse -- /path/to/input.elf
 
 `GHIDRA_HEADLESS` is optional and defaults to the project-local launcher under
 `.tools/ghidra/`. `REVE_GHIDRA_PROJECTS` is optional and defaults to
-`ghidra-projects` in the current directory. Each run writes its temporary
-Ghidra project and protobuf export in a unique job directory, then removes
-that directory when parsing finishes.
+`rêve/projects` in the user's data directory
+(`~/Library/Application Support/rêve/projects/` on macOS). On Linux it
+defaults to `~/rêve/projects/`, since Ghidra refuses project paths through
+hidden directories like `~/.local/share`.
+
+That directory holds one Ghidra project per analyzed binary, named after the
+SHA-256 of its bytes. A binary's first run imports and analyzes it in a unique
+job directory, then moves the project into place. Later runs export that
+project without analyzing it again. The job directory, with the protobuf
+export, is removed when parsing finishes.
 
 Each decoded export is also saved in the user's cache directory
 (`~/Library/Caches/rêve/analyses/` on macOS). A binary analyzed before loads
 from there without running Ghidra. The key hashes the binary's name and bytes,
 `Export.java`, `DecompilerPool.java`, `engine.proto`, the installed extension jar and the Ghidra
 version, so changing the exporter or schema, reinstalling the extension, or
-upgrading Ghidra runs a fresh analysis. Delete that directory to force one.
+upgrading Ghidra exports the binary's project again. Delete that directory to
+force a fresh export, and the binary's project to force a fresh analysis.
 
 ## Test the exporter
 

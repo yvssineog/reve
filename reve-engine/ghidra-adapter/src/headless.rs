@@ -13,7 +13,7 @@ use std::{
 
 use crate::{CancellationToken, config::GhidraConfig, error::ParserError};
 
-const PROJECT_NAME: &str = "ReveAnalysis";
+pub(crate) const PROJECT_NAME: &str = "ReveAnalysis";
 const EXPORT_SCRIPT: &str = "Export.java";
 /// Searched before the installed extension, so `Export.java` edits apply without reinstalling it.
 const SCRIPTS_DIR: &str = concat!(
@@ -22,16 +22,23 @@ const SCRIPTS_DIR: &str = concat!(
 );
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Run Ghidra Headless to import and analyze `input`, then invoke `Export.java`.
+/// Where the program Ghidra exports comes from.
+pub(crate) enum Source<'a> {
+    /// Import and analyze this binary into a new project.
+    Import(&'a Path),
+    /// The program already analyzed in the project, exported without analyzing again.
+    Saved,
+}
+
+/// Run Ghidra Headless on the project at `project_location`, then invoke `Export.java`.
 ///
-/// `project_location` is the unique per-analysis directory. `export_path` is
-/// passed to the script as its only argument. This function returns only after
-/// the Ghidra process exits, cancellation is requested, or the configured
-/// timeout expires.
+/// `export_path` is passed to the script as its only argument. This function
+/// returns only after the Ghidra process exits, cancellation is requested, or
+/// the configured timeout expires.
 pub(crate) fn run_headless(
     config: &GhidraConfig,
     project_location: &Path,
-    input: &Path,
+    source: Source,
     export_path: &Path,
     cancellation: &CancellationToken,
 ) -> Result<Output, ParserError> {
@@ -39,20 +46,25 @@ pub(crate) fn run_headless(
         return Err(ParserError::Cancelled);
     }
     config.validate()?;
-    let input =
-        fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+    let source = match source {
+        Source::Import(input) => {
+            let input = fs::canonicalize(input)
+                .map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+            vec![OsStr::new("-import").to_os_string(), input.into_os_string()]
+        }
+        // One program per project, so `-process` needs no file name.
+        Source::Saved => vec!["-process".into(), "-noanalysis".into()],
+    };
 
-    let args = [
-        project_location.as_os_str(),
-        OsStr::new(PROJECT_NAME),
-        OsStr::new("-import"),
-        input.as_os_str(),
+    let mut args = vec![project_location.as_os_str(), OsStr::new(PROJECT_NAME)];
+    args.extend(source.iter().map(|arg| arg.as_os_str()));
+    args.extend([
         OsStr::new("-scriptPath"),
         OsStr::new(SCRIPTS_DIR),
         OsStr::new("-postScript"),
         OsStr::new(EXPORT_SCRIPT),
         export_path.as_os_str(),
-    ];
+    ]);
 
     let mut command = make_command(&config.analyze_headless, &args);
     configure_java_environment(&mut command, &config.java_home)?;
