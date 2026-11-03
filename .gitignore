@@ -2,3 +2,5 @@ target/
 .tools/
 /ghidra-projects/
 .DS_Store
+.vscode/
+.metals/

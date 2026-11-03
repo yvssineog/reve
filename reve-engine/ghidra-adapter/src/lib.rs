@@ -17,6 +17,9 @@ pub mod proto {
 /// Configuration for locating and running Ghidra Headless.
 pub mod config;
 
+/// Cooperative cancellation for a running Ghidra analysis.
+pub mod cancellation;
+
 /// Errors returned by the Ghidra adapter.
 pub mod error;
 
@@ -32,6 +35,7 @@ pub(crate) mod job;
 /// Launch and wait for Ghidra Headless.
 pub(crate) mod headless;
 
+pub use cancellation::CancellationToken;
 pub use config::GhidraConfig;
 pub use error::ParserError;
 pub use orchestrator::GhidraAdapter;

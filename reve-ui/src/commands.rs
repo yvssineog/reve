@@ -11,7 +11,7 @@ use crate::menu::{self, Note, Row, Section};
 // pane included.
 pub fn row(
     icon: Icon,
-    label: &'static str,
+    label: impl Into<SharedString>,
     action: Box<dyn Action>,
     window: &Window,
     cx: &App,
