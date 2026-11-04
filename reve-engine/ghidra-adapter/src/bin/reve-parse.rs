@@ -144,6 +144,7 @@ mod tests {
                     decompilation: None,
                 })
                 .collect(),
+            bookmarks: Vec::new(),
         };
         let mut summary = Vec::new();
 
@@ -207,6 +208,7 @@ mod tests {
                 ),
                 function("absent", None),
             ],
+            bookmarks: Vec::new(),
         };
         let mut summary = Vec::new();
 

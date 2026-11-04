@@ -1,17 +1,23 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use gpui_kit::base::actions::{Confirm, SelectDown, SelectPageDown, SelectPageUp, SelectUp};
+use gpui_kit::base::actions::{
+    Cancel, Confirm, SelectDown, SelectPageDown, SelectPageUp, SelectUp,
+};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{StyledExt as _, h_flex};
+use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex};
 use gpui_kit::*;
-use reve_model::{Address, Function, Instruction, Program};
+use reve_model::{Address, Changes, Edit, Function, Instruction, Program};
 
 use super::{monospace, pressable};
+use crate::ghidra::{Ghidra, Status};
 use crate::palette::Palette;
 
 // The key context the listing binds its shortcuts under.
 const CONTEXT: &str = "Code";
+// The same, while no comment field in it has the keyboard, so typing there types.
+const KEYS: &str = "Code && !Input";
 // Instructions a page key moves the cursor.
 const PAGE: isize = 24;
 // The height of every row.
@@ -25,21 +31,24 @@ const MNEMONIC: usize = 7;
 const OPERANDS: usize = 30;
 pub const GUTTER: Pixels = px(12.);
 
-actions!(listing, [HalfPageDown, HalfPageUp]);
+actions!(listing, [HalfPageDown, HalfPageUp, Comment]);
 
 // Arrows or j/k step one instruction, page keys a page, ctrl-d and ctrl-u half a screen,
-// enter follows a call.
+// enter follows a call. Semicolon writes the instruction's comment; enter saves it and escape
+// leaves it as it was.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("up", SelectUp, Some(CONTEXT)),
-        KeyBinding::new("k", SelectUp, Some(CONTEXT)),
-        KeyBinding::new("down", SelectDown, Some(CONTEXT)),
-        KeyBinding::new("j", SelectDown, Some(CONTEXT)),
-        KeyBinding::new("pageup", SelectPageUp, Some(CONTEXT)),
-        KeyBinding::new("pagedown", SelectPageDown, Some(CONTEXT)),
-        KeyBinding::new("ctrl-d", HalfPageDown, Some(CONTEXT)),
-        KeyBinding::new("ctrl-u", HalfPageUp, Some(CONTEXT)),
+        KeyBinding::new("up", SelectUp, Some(KEYS)),
+        KeyBinding::new("k", SelectUp, Some(KEYS)),
+        KeyBinding::new("down", SelectDown, Some(KEYS)),
+        KeyBinding::new("j", SelectDown, Some(KEYS)),
+        KeyBinding::new("pageup", SelectPageUp, Some(KEYS)),
+        KeyBinding::new("pagedown", SelectPageDown, Some(KEYS)),
+        KeyBinding::new("ctrl-d", HalfPageDown, Some(KEYS)),
+        KeyBinding::new("ctrl-u", HalfPageUp, Some(KEYS)),
+        KeyBinding::new(";", Comment, Some(KEYS)),
         KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
+        KeyBinding::new("escape", Cancel, Some(CONTEXT)),
     ]);
 }
 
@@ -84,8 +93,26 @@ pub struct Listing {
     // Hex digits every address shows with, so the address column fits the longest.
     digits: usize,
     history: History,
+    // Edits the program has taken, so panes can tell when to show it again.
+    edits: usize,
+    // Makes the user's edits.
+    ghidra: Entity<Ghidra>,
+    commenting: Option<Commenting>,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
+}
+
+// A field in place of an instruction's end-of-line comment, open until Ghidra has saved what
+// it holds.
+struct Commenting {
+    // The instruction's row.
+    row: usize,
+    address: Address,
+    field: Entity<InputState>,
+    // The comment it opened with.
+    was: String,
+    saving: bool,
+    _subscriptions: [Subscription; 2],
 }
 
 // The rows jumps left the cursor on, so Back and Forward can return. Steps aren't jumps.
@@ -119,7 +146,7 @@ impl History {
 
 impl Listing {
     // Opens with the cursor on the first instruction.
-    pub fn new(program: Program, cx: &mut Context<Self>) -> Self {
+    pub fn new(program: Program, ghidra: Entity<Ghidra>, cx: &mut Context<Self>) -> Self {
         let digits = digits(&program);
         let rows = layout(&program, digits);
         let (instructions, addresses) = index(&program, &rows);
@@ -135,6 +162,9 @@ impl Listing {
             scroll,
             digits,
             history: History::default(),
+            edits: 0,
+            ghidra,
+            commenting: None,
             focus: cx.focus_handle(),
         }
     }
@@ -150,7 +180,11 @@ impl Listing {
     }
 
     // Puts the cursor on row `ix` and scrolls it into view.
+    // Leaving the row of a comment being written drops what it holds.
     fn jump(&mut self, ix: usize, strategy: ScrollStrategy, cx: &mut Context<Self>) {
+        if self.commenting.as_ref().is_some_and(|c| c.row != ix) {
+            self.commenting = None;
+        }
         self.cursor = ix;
         self.scroll.scroll_to_item(ix, strategy);
         cx.notify();
@@ -230,6 +264,40 @@ impl Listing {
         !self.history.forward.is_empty()
     }
 
+    // The instruction at `address` and its function.
+    pub fn at(&self, address: Address) -> Option<(&Function, &Instruction)> {
+        row_at(&self.addresses, address).map(|ix| self.code(ix))
+    }
+
+    // What `instruction`'s operands read as: the function a call names, or else the operands.
+    pub fn operands<'a>(&'a self, instruction: &'a Instruction) -> &'a str {
+        callee(&self.program, instruction).map_or(&instruction.operands, |function| &function.name)
+    }
+
+    pub fn bookmarked(&self, address: Address) -> bool {
+        self.program.bookmarks.binary_search(&address).is_ok()
+    }
+
+    // Has Ghidra bookmark the cursor's instruction, or take its bookmark off, once Ghidra can.
+    // Until then the footer says why not.
+    pub fn toggle_bookmark(&mut self, cx: &mut Context<Self>) {
+        if !self.ghidra.read(cx).ready() {
+            return;
+        }
+        let address = self.address();
+        let edit = Edit::Bookmark {
+            address,
+            on: !self.bookmarked(address),
+        };
+        let listing = cx.entity();
+        if let Err(why) = self
+            .ghidra
+            .update(cx, |ghidra, cx| ghidra.edit(edit, listing, cx))
+        {
+            eprintln!("bookmarking: {why}");
+        }
+    }
+
     // The instruction at `address`, or else the first one after it, and its function.
     pub fn at_or_after(&self, address: Address) -> Option<(&Function, &Instruction)> {
         row_from(&self.addresses, address).map(|ix| self.code(ix))
@@ -237,6 +305,132 @@ impl Listing {
 
     pub fn program(&self) -> &Program {
         &self.program
+    }
+
+    // Takes in what an edit changed. Names show in labels and XREFs, so a rename lays the rows
+    // out again; it moves no instruction, so the cursor stays put.
+    pub fn apply(&mut self, changes: &Changes, cx: &mut Context<Self>) {
+        self.program.apply(changes);
+        if !changes.functions.is_empty() {
+            self.rows = layout(&self.program, self.digits);
+        }
+        self.edits += 1;
+        cx.notify();
+    }
+
+    pub fn edits(&self) -> usize {
+        self.edits
+    }
+
+    // Opens a field on the cursor's instruction holding its comment, once Ghidra can save one.
+    // Until then the footer says why not.
+    fn comment(&mut self, _: &Comment, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ghidra.read(cx).ready() {
+            return;
+        }
+        let (_, instruction) = self.code(self.cursor);
+        let (address, was) = (instruction.address, instruction.comment.clone());
+        // ponytail: a one-line field flattens a multi-line comment once it's edited; take a
+        // multi-line field if Ghidra's own long comments get edited here.
+        let was = was.unwrap_or_default();
+        let field = cx.new(|cx| InputState::new(window, cx).default_value(was.clone()));
+        let end = was.len();
+        field.update(cx, |field, cx| {
+            field.focus(window, cx);
+            field.set_selected_range(end..end, cx);
+        });
+        self.commenting = Some(Commenting {
+            row: self.cursor,
+            address,
+            was,
+            saving: false,
+            _subscriptions: [
+                cx.subscribe_in(&field, window, |this, _, event, window, cx| {
+                    if let InputEvent::Blur = event {
+                        this.cancel(&Cancel, window, cx);
+                    }
+                }),
+                cx.observe_in(&self.ghidra, window, Self::saved),
+            ],
+            field,
+        });
+        cx.notify();
+    }
+
+    // Saves the comment being written, or else follows the call under the cursor.
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commenting) = &mut self.commenting else {
+            self.follow(cx);
+            return;
+        };
+        if commenting.saving {
+            return;
+        }
+        let text = commenting.field.read(cx).value().trim().to_owned();
+        if text == commenting.was {
+            self.cancel(&Cancel, window, cx);
+            return;
+        }
+        let edit = Edit::Comment {
+            address: commenting.address,
+            text,
+        };
+        let listing = cx.entity();
+        match self
+            .ghidra
+            .update(cx, |ghidra, cx| ghidra.edit(edit, listing, cx))
+        {
+            Ok(()) => {
+                commenting.saving = true;
+                let field = commenting.field.clone();
+                field.update(cx, |field, cx| field.set_readonly(true, cx));
+            }
+            // Ghidra was ready when the field opened, so this is rare; the field stays.
+            Err(why) => eprintln!("saving a comment: {why}"),
+        }
+    }
+
+    // Drops the comment being written, unless Ghidra is saving it, and hands the keyboard back.
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.commenting {
+            Some(commenting) if !commenting.saving => {
+                self.commenting = None;
+                window.focus(&self.focus, cx);
+                cx.notify();
+            }
+            Some(_) => {}
+            None => cx.propagate(),
+        }
+    }
+
+    // Closes the field once Ghidra has saved its comment. A refusal leaves it open to change,
+    // and the footer says why.
+    fn saved(&mut self, ghidra: Entity<Ghidra>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commenting) = &mut self.commenting else {
+            return;
+        };
+        if !commenting.saving {
+            return;
+        }
+        match ghidra.read(cx).status() {
+            Status::Edited(_) => {
+                self.commenting = None;
+                window.focus(&self.focus, cx);
+            }
+            Status::Failed(_) => {
+                commenting.saving = false;
+                let field = commenting.field.clone();
+                field.update(cx, |field, cx| field.set_readonly(false, cx));
+            }
+            Status::Starting | Status::Ready | Status::Editing(_) => return,
+        }
+        cx.notify();
+    }
+
+    // The function the cursor names: the one its instruction calls, or else the one it's in.
+    pub fn named(&self) -> &Function {
+        let (function, instruction) = self.code(self.cursor);
+        callee(&self.program, instruction).unwrap_or(function)
     }
 
     // The function the cursor is in.
@@ -258,7 +452,7 @@ impl Listing {
         (function, &function.instructions[instruction])
     }
 
-    // Row `ix`, inset by the gutter, which will hold bookmarks.
+    // Row `ix`, inset by the gutter, which marks bookmarks.
     fn row(&self, ix: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match &self.rows[ix] {
             Row::Gap => h_flex()
@@ -323,11 +517,46 @@ impl Listing {
         columns.push(&bytes.join(" "), BYTES, palette.fg_4);
         columns.push(&instruction.mnemonic, MNEMONIC, palette.mnemonic);
         columns.push(operands, OPERANDS, hue);
+        let field = self.commenting.as_ref().filter(|c| c.row == ix);
+        let comment = match (field, &instruction.comment) {
+            (Some(_), _) => Some("; ".to_owned()),
+            (None, Some(comment)) => Some(remark(comment)),
+            (None, None) => None,
+        };
+        if let Some(comment) = comment {
+            columns.push(&comment, comment.chars().count(), palette.comment);
+        }
 
-        let row = h_flex().id(ix).w_full().h(ROW).px(GUTTER);
+        let row = h_flex().id(ix).relative().w_full().h(ROW).px(GUTTER);
         pressable(row, ix == self.cursor, palette)
             .whitespace_nowrap()
+            .children(self.bookmarked(instruction.address).then(|| {
+                div()
+                    .absolute()
+                    .left(px(4.))
+                    .top(px(3.))
+                    .w(px(3.))
+                    .h(ROW - px(6.))
+                    .rounded(px(1.5))
+                    .bg(palette.comment)
+            }))
             .child(columns.text())
+            // The field is a little taller than a row; centered, its text sits on the row's line.
+            .children(field.map(|field| {
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .h(ROW)
+                    .overflow_hidden()
+                    .text_color(palette.comment)
+                    .child(
+                        Input::new(&field.field)
+                            .appearance(false)
+                            .p_0()
+                            .xsmall()
+                            .text_size(px(12.)),
+                    )
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| this.jump(ix, ScrollStrategy::Nearest, cx)),
@@ -360,7 +589,9 @@ impl Render for Listing {
             .on_action(cx.listener(|this, _: &SelectPageDown, _, cx| this.step(PAGE, cx)))
             .on_action(cx.listener(|this, _: &HalfPageDown, _, cx| this.half_page(1, cx)))
             .on_action(cx.listener(|this, _: &HalfPageUp, _, cx| this.half_page(-1, cx)))
-            .on_action(cx.listener(|this, _: &Confirm, _, cx| this.follow(cx)))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::comment))
             .child(
                 uniform_list(
                     "listing",
@@ -415,6 +646,15 @@ impl Columns {
 
     fn text(self) -> StyledText {
         StyledText::new(self.text).with_highlights(self.hues)
+    }
+}
+
+// An end-of-line comment as its row shows it: the first line after a semicolon, the rest
+// marked as cut.
+fn remark(comment: &str) -> String {
+    match comment.split_once('\n') {
+        Some((first, _)) => format!("; {}…", first.trim_end()),
+        None => format!("; {comment}"),
     }
 }
 
@@ -502,7 +742,9 @@ mod tests {
 
     use gpui_kit::{Hsla, white};
 
-    use super::{Columns, History, callee, digits, hex, index, layout, row_at, row_from, xrefs};
+    use super::{
+        Columns, History, callee, digits, hex, index, layout, remark, row_at, row_from, xrefs,
+    };
 
     fn function(name: &str, entry: u64, code: &[(&str, &str)]) -> Function {
         let instructions: Vec<_> = (0..)
@@ -513,6 +755,7 @@ mod tests {
                 mnemonic: mnemonic.into(),
                 operands: operands.into(),
                 bytes: vec![0; 4],
+                comment: None,
             })
             .collect();
         Function {
@@ -539,6 +782,7 @@ mod tests {
                 function("helper", 0x1010, &[("mov", "x0, #0x1"), ("bl", "0x2000")]),
                 function("leaf", 0x1020, &[("ret", "")]),
             ],
+            bookmarks: Vec::new(),
         }
     }
 
@@ -602,6 +846,12 @@ mod tests {
             "a new jump drops what Forward held"
         );
         assert_eq!(history.back(7), Some(5));
+    }
+
+    #[test]
+    fn comments_show_their_first_line() {
+        assert_eq!(remark("checks the magic"), "; checks the magic");
+        assert_eq!(remark("annobin note \nversion 3"), "; annobin note…");
     }
 
     #[test]

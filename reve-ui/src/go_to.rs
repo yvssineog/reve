@@ -119,6 +119,7 @@ mod tests {
             mnemonic: "ret".into(),
             operands: String::new(),
             bytes: vec![0; 4],
+            comment: None,
         };
         Function {
             name: name.into(),

@@ -5374,6 +5374,7 @@ name = "reve-ghidra-adapter"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "getrandom 0.3.4",
  "prost",
  "prost-build",
  "protoc-bin-vendored",

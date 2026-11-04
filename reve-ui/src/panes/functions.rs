@@ -21,6 +21,8 @@ pub struct Functions {
     listing: Entity<Listing>,
     // The marked function's entry.
     current: Address,
+    // The listing's edits when last drawn.
+    edits: usize,
     scroll: UniformListScrollHandle,
     _sync: Subscription,
 }
@@ -29,6 +31,7 @@ impl Functions {
     pub fn new(listing: Entity<Listing>, cx: &mut Context<Self>) -> Self {
         Self {
             current: listing.read(cx).function().entry,
+            edits: listing.read(cx).edits(),
             _sync: cx.observe(&listing, |this, _, cx| this.sync(cx)),
             listing,
             scroll: UniformListScrollHandle::new(),
@@ -36,18 +39,20 @@ impl Functions {
     }
 
     // Marks the listing cursor's function, scrolled into view once the cursor leaves the one
-    // marked.
+    // marked. Draws again after an edit.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let listing = self.listing.read(cx);
-        let entry = listing.function().entry;
-        if entry == self.current {
+        let (entry, edits) = (listing.function().entry, listing.edits());
+        if entry == self.current && edits == self.edits {
             return;
         }
-        self.current = entry;
-        let functions = &listing.program().functions;
-        if let Ok(ix) = functions.binary_search_by_key(&entry, |function| function.entry) {
-            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        if entry != self.current {
+            let functions = &listing.program().functions;
+            if let Ok(ix) = functions.binary_search_by_key(&entry, |function| function.entry) {
+                self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+            }
         }
+        (self.current, self.edits) = (entry, edits);
         cx.notify();
     }
 

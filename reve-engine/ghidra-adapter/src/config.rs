@@ -19,7 +19,9 @@ pub struct GhidraConfig {
     pub analyze_headless: PathBuf,
     /// Project-local JDK used to launch Ghidra.
     pub java_home: PathBuf,
-    /// Directory where Ghidra stores its analysis projects.
+    /// Directory holding one Ghidra project per analyzed binary, named after
+    /// the hash of its bytes, beside the temporary directories of running
+    /// analyses.
     ///
     /// The orchestrator will create this directory if it does not exist.
     pub projects_dir: PathBuf,
@@ -67,7 +69,8 @@ impl GhidraConfig {
     ///
     /// `GHIDRA_HEADLESS` defaults to the project-local launcher under
     /// `.tools/ghidra/` when unset or empty. `REVE_GHIDRA_PROJECTS` defaults to
-    /// `ghidra-projects` relative to the current working directory.
+    /// `rêve/projects` in the user's data directory, or in their home directory
+    /// where the data directory is hidden, as `~/.local/share` is on Linux.
     pub fn from_environment() -> Self {
         let analyze_headless = match env::var_os(GHIDRA_HEADLESS_ENV) {
             Some(path) if !path.is_empty() => PathBuf::from(path),
@@ -75,7 +78,7 @@ impl GhidraConfig {
         };
         let projects_dir = match env::var_os(GHIDRA_PROJECTS_ENV) {
             Some(path) => PathBuf::from(path),
-            None => PathBuf::from("ghidra-projects"),
+            None => default_projects_dir(),
         };
 
         Self::new(analyze_headless, projects_dir)
@@ -164,6 +167,24 @@ impl fmt::Display for ConfigError {
             ),
         }
     }
+}
+
+/// `rêve/projects` in the first of the user's data and home directories that
+/// Ghidra accepts: it refuses project paths with a component starting with a dot.
+fn default_projects_dir() -> PathBuf {
+    let visible = |path: &PathBuf| {
+        !path
+            .components()
+            .any(|part| part.as_os_str().as_encoded_bytes().starts_with(b"."))
+    };
+    [dirs::data_dir(), dirs::home_dir()]
+        .into_iter()
+        .flatten()
+        .find(visible)
+        .map_or_else(
+            || PathBuf::from("ghidra-projects"),
+            |root| root.join("rêve").join("projects"),
+        )
 }
 
 /// Resolve a project-local tool path relative to this crate's source directory.

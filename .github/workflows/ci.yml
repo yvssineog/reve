@@ -26,3 +26,8 @@ jobs:
         run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - if: runner.os == 'Linux'
+        working-directory: reve-engine/ghidra-adapter/ghidra-extension
+        run: |
+          javac -d "$RUNNER_TEMP/decompiler-pool" ghidra_scripts/DecompilerPool.java developer_scripts/DecompilerPoolTest.java
+          java -cp "$RUNNER_TEMP/decompiler-pool" DecompilerPoolTest

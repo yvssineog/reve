@@ -13,25 +13,32 @@ use std::{
 
 use crate::{CancellationToken, config::GhidraConfig, error::ParserError};
 
-const PROJECT_NAME: &str = "ReveAnalysis";
+pub(crate) const PROJECT_NAME: &str = "ReveAnalysis";
 const EXPORT_SCRIPT: &str = "Export.java";
 /// Searched before the installed extension, so `Export.java` edits apply without reinstalling it.
-const SCRIPTS_DIR: &str = concat!(
+pub(crate) const SCRIPTS_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/ghidra-extension/ghidra_scripts"
 );
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Run Ghidra Headless to import and analyze `input`, then invoke `Export.java`.
+/// Where the program Ghidra exports comes from.
+pub(crate) enum Source<'a> {
+    /// Import and analyze this binary into a new project.
+    Import(&'a Path),
+    /// The program already analyzed in the project, exported without analyzing again.
+    Saved,
+}
+
+/// Run Ghidra Headless on the project at `project_location`, then invoke `Export.java`.
 ///
-/// `project_location` is the unique per-analysis directory. `export_path` is
-/// passed to the script as its only argument. This function returns only after
-/// the Ghidra process exits, cancellation is requested, or the configured
-/// timeout expires.
+/// `export_path` is passed to the script as its only argument. This function
+/// returns only after the Ghidra process exits, cancellation is requested, or
+/// the configured timeout expires.
 pub(crate) fn run_headless(
     config: &GhidraConfig,
     project_location: &Path,
-    input: &Path,
+    source: Source,
     export_path: &Path,
     cancellation: &CancellationToken,
 ) -> Result<Output, ParserError> {
@@ -39,20 +46,25 @@ pub(crate) fn run_headless(
         return Err(ParserError::Cancelled);
     }
     config.validate()?;
-    let input =
-        fs::canonicalize(input).map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+    let source = match source {
+        Source::Import(input) => {
+            let input = fs::canonicalize(input)
+                .map_err(|_| ParserError::InputNotFound(input.to_path_buf()))?;
+            vec![OsStr::new("-import").to_os_string(), input.into_os_string()]
+        }
+        // One program per project, so `-process` needs no file name.
+        Source::Saved => vec!["-process".into(), "-noanalysis".into()],
+    };
 
-    let args = [
-        project_location.as_os_str(),
-        OsStr::new(PROJECT_NAME),
-        OsStr::new("-import"),
-        input.as_os_str(),
+    let mut args = vec![project_location.as_os_str(), OsStr::new(PROJECT_NAME)];
+    args.extend(source.iter().map(|arg| arg.as_os_str()));
+    args.extend([
         OsStr::new("-scriptPath"),
         OsStr::new(SCRIPTS_DIR),
         OsStr::new("-postScript"),
         OsStr::new(EXPORT_SCRIPT),
         export_path.as_os_str(),
-    ];
+    ]);
 
     let mut command = make_command(&config.analyze_headless, &args);
     configure_java_environment(&mut command, &config.java_home)?;
@@ -122,7 +134,10 @@ pub(crate) fn run_headless(
     Ok(output)
 }
 
-fn configure_java_environment(command: &mut Command, java_home: &Path) -> Result<(), ParserError> {
+pub(crate) fn configure_java_environment(
+    command: &mut Command,
+    java_home: &Path,
+) -> Result<(), ParserError> {
     // `canonicalize` returns Windows verbatim paths (`\\?\C:\...`). Ghidra's
     // batch launchers do not handle those reliably, so pass normal DOS paths
     // across the process boundary.
@@ -157,7 +172,7 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8
 }
 
 #[cfg(not(windows))]
-fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
+pub(crate) fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     use std::os::unix::process::CommandExt;
 
     let mut command = Command::new(launcher);
@@ -166,7 +181,7 @@ fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
 }
 
 #[cfg(windows)]
-fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
+pub(crate) fn make_command(launcher: &Path, args: &[&OsStr]) -> Command {
     use std::os::windows::process::CommandExt;
 
     if !matches!(
@@ -222,7 +237,7 @@ fn child_path_arg(value: &OsStr) -> std::ffi::OsString {
 }
 
 #[cfg(windows)]
-fn terminate_process_tree(child: &mut std::process::Child) {
+pub(crate) fn terminate_process_tree(child: &mut std::process::Child) {
     // analyzeHeadless.bat starts Java as a child of cmd.exe. Kill the process
     // tree so a timeout does not leave the Java analysis running in background.
     let pid = child.id().to_string();
@@ -235,7 +250,7 @@ fn terminate_process_tree(child: &mut std::process::Child) {
 }
 
 #[cfg(not(windows))]
-fn terminate_process_tree(child: &mut std::process::Child) {
+pub(crate) fn terminate_process_tree(child: &mut std::process::Child) {
     // analyzeHeadless runs launch.sh, which runs Java, neither with `exec`.
     // The launcher leads its own process group, so kill the whole group.
     let group = format!("-{}", child.id());

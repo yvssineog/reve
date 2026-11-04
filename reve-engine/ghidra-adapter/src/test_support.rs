@@ -65,8 +65,12 @@ pub(crate) fn fake_jdk(directory: &Path) -> io::Result<PathBuf> {
 
 /// Create a fake `analyzeHeadless` launcher for an end-to-end adapter test.
 ///
-/// The `mode` is one of `write`, `missing`, `invalid`, `fail`, or `timeout`.
-/// Every launch appends a line to `launches` beside the script.
+/// The `mode` is one of `write`, `missing`, `invalid`, `fail`, `timeout`, or
+/// `serve`. `serve` writes its arguments to `args` beside the script, one per
+/// line, then runs until a `stop` file appears there.
+/// Every launch appends its third argument, `-import` or `-process`, as a line
+/// to `launches` beside the script. An import creates the project's files in
+/// the project location, its first argument, as Ghidra does.
 pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Result<PathBuf> {
     let (extension, script) = if cfg!(windows) {
         let body = match mode {
@@ -81,6 +85,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
             "timeout" => {
                 "powershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 10\"\r\nexit /b 0\r\n"
             }
+            "serve" => {
+                "(for %%a in (%*) do @echo %%~a)>\"%~dp0args\"\r\npowershell.exe -NoProfile -NonInteractive -Command \"while (!(Test-Path '%~dp0stop')) { Start-Sleep -Milliseconds 100 }\"\r\nexit /b 0\r\n"
+            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -91,7 +98,7 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         (
             "bat",
             format!(
-                "@echo off\r\necho launch>>\"%~dp0launches\"\r\n:args\r\nif not \"%~1\"==\"\" (set \"last=%~1\" & shift & goto args)\r\n{body}"
+                "@echo off\r\necho %~3>>\"%~dp0launches\"\r\nif \"%~3\"==\"-import\" (mkdir \"%~1\\ReveAnalysis.rep\" & type nul > \"%~1\\ReveAnalysis.gpr\")\r\n:args\r\nif not \"%~1\"==\"\" (set \"last=%~1\" & shift & goto args)\r\n{body}"
             ),
         )
     } else {
@@ -107,6 +114,9 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
             // Like Ghidra's launch.sh, start the long-running child without
             // `exec`, and record its pid so a test can check it was killed.
             "timeout" => "sleep 30 &\necho $! > \"$(dirname \"$0\")/launcher-child.pid\"\nwait\n",
+            "serve" => {
+                "printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args\"\nwhile [ ! -e \"$(dirname \"$0\")/stop\" ]; do sleep 0.1; done\n"
+            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -117,7 +127,7 @@ pub(crate) fn fake_headless(directory: &Path, name: &str, mode: &str) -> io::Res
         (
             "sh",
             format!(
-                "#!/bin/sh\n[ -n \"$REVE_FAKE_WARM_UP\" ] && exit 0\necho launch >> \"$(dirname \"$0\")/launches\"\n{body}"
+                "#!/bin/sh\n[ -n \"$REVE_FAKE_WARM_UP\" ] && exit 0\necho \"$3\" >> \"$(dirname \"$0\")/launches\"\n[ \"$3\" = -import ] && mkdir -p \"$1/ReveAnalysis.rep\" && : > \"$1/ReveAnalysis.gpr\"\n{body}"
             ),
         )
     };

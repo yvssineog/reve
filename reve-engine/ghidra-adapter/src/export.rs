@@ -4,8 +4,8 @@ use std::{fs, io, path::Path};
 
 use prost::Message;
 use reve_model::{
-    Address, Decompilation, DecompilationStatus, Function, Instruction, Line, Program, Token,
-    TokenKind,
+    Address, Changes, Decompilation, DecompilationStatus, Function, FunctionChange, Instruction,
+    Line, Program, Token, TokenKind,
 };
 
 use crate::proto::reve::engine::v1 as wire;
@@ -68,7 +68,39 @@ pub fn into_model(message: wire::Program) -> Program {
             .into_iter()
             .map(function_into_model)
             .collect(),
+        bookmarks: message.bookmarks.into_iter().map(Address).collect(),
     }
+}
+
+/// Convert Ghidra's answer to an edit into what changed, or its reason for refusing the edit.
+pub(crate) fn changes_into_model(message: wire::Changes) -> Result<Changes, String> {
+    if let Some(error) = message.error {
+        return Err(error);
+    }
+    Ok(Changes {
+        functions: message
+            .functions
+            .into_iter()
+            .map(|function| FunctionChange {
+                entry: Address(function.entry),
+                name: function.name,
+                decompilation: function.decompilation.map(decompilation_into_model),
+            })
+            .collect(),
+        comments: message
+            .comments
+            .into_iter()
+            .map(|comment| {
+                let text = (!comment.text.is_empty()).then_some(comment.text);
+                (Address(comment.address), text)
+            })
+            .collect(),
+        bookmarks: message
+            .bookmarks
+            .into_iter()
+            .map(|bookmark| (Address(bookmark.address), bookmark.on))
+            .collect(),
+    })
 }
 
 fn function_into_model(message: wire::Function) -> Function {
@@ -138,6 +170,7 @@ fn instruction_into_model(message: wire::Instruction) -> Instruction {
         mnemonic: message.mnemonic,
         operands: message.operands,
         bytes: message.bytes,
+        comment: message.comment,
     }
 }
 
@@ -163,9 +196,11 @@ mod tests {
                     mnemonic: "mov".into(),
                     operands: "rax, rbx".into(),
                     bytes: vec![0x48, 0x89],
+                    comment: None,
                 }],
                 decompilation: None,
             }],
+            bookmarks: Vec::new(),
         }
     }
 
@@ -202,6 +237,67 @@ mod tests {
         );
         assert_eq!(model.functions[0].instructions[0].bytes, [0x48, 0x89]);
         assert!(model.functions[0].decompilation.is_none());
+    }
+
+    #[test]
+    fn into_model_keeps_comments_and_bookmarks() {
+        let mut message = sample_message();
+        message.functions[0].instructions[0].comment = Some("checks the magic".into());
+        message.bookmarks = vec![0x1000, u64::MAX - 1];
+
+        let model = into_model(message);
+
+        assert_eq!(
+            model.functions[0].instructions[0].comment.as_deref(),
+            Some("checks the magic")
+        );
+        assert_eq!(model.bookmarks, [Address(0x1000), Address(u64::MAX - 1)]);
+    }
+
+    #[test]
+    fn changes_into_model_reads_changes_or_the_refusal() {
+        let changes = changes_into_model(wire::Changes {
+            error: None,
+            functions: vec![wire::Function {
+                name: "parse".into(),
+                entry: 0x2000,
+                ..wire::Function::default()
+            }],
+            comments: vec![
+                wire::Comment {
+                    address: 0x1000,
+                    text: "checks the magic".into(),
+                },
+                wire::Comment {
+                    address: 0x1004,
+                    text: String::new(),
+                },
+            ],
+            bookmarks: vec![wire::Bookmark {
+                address: 0x1000,
+                on: true,
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(changes.functions[0].entry, Address(0x2000));
+        assert_eq!(changes.functions[0].name, "parse");
+        assert_eq!(changes.functions[0].decompilation, None);
+        assert_eq!(
+            changes.comments,
+            [
+                (Address(0x1000), Some("checks the magic".into())),
+                (Address(0x1004), None)
+            ],
+            "empty text is no comment"
+        );
+        assert_eq!(changes.bookmarks, [(Address(0x1000), true)]);
+
+        let refused = changes_into_model(wire::Changes {
+            error: Some("Duplicate name: parse".into()),
+            ..wire::Changes::default()
+        });
+        assert_eq!(refused, Err("Duplicate name: parse".into()));
     }
 
     #[test]

@@ -90,16 +90,71 @@ cargo run -p reve-ghidra-adapter --bin reve-parse -- /path/to/input.elf
 
 `GHIDRA_HEADLESS` is optional and defaults to the project-local launcher under
 `.tools/ghidra/`. `REVE_GHIDRA_PROJECTS` is optional and defaults to
-`ghidra-projects` in the current directory. Each run writes its temporary
-Ghidra project and protobuf export in a unique job directory, then removes
-that directory when parsing finishes.
+`rêve/projects` in the user's data directory
+(`~/Library/Application Support/rêve/projects/` on macOS). On Linux it
+defaults to `~/rêve/projects/`, since Ghidra refuses project paths through
+hidden directories like `~/.local/share`.
+
+That directory holds one Ghidra project per analyzed binary, named after the
+SHA-256 of its bytes. A binary's first run imports and analyzes it in a unique
+job directory, then moves the project into place. Later runs export that
+project without analyzing it again. The job directory, with the protobuf
+export, is removed when parsing finishes.
 
 Each decoded export is also saved in the user's cache directory
 (`~/Library/Caches/rêve/analyses/` on macOS). A binary analyzed before loads
 from there without running Ghidra. The key hashes the binary's name and bytes,
-`Export.java`, `engine.proto`, the installed extension jar and the Ghidra
+`Export.java`, `DecompilerPool.java`, `engine.proto`, the installed extension jar and the Ghidra
 version, so changing the exporter or schema, reinstalling the extension, or
-upgrading Ghidra runs a fresh analysis. Delete that directory to force one.
+upgrading Ghidra exports the binary's project again. Delete that directory to
+force a fresh export, and the binary's project to force a fresh analysis.
+
+## Edit a program
+
+`GhidraAdapter::session` starts Ghidra on a binary's kept project with
+`Serve.java` and returns a `GhidraSession` once Ghidra is ready, a few seconds
+later. Each `edit` renames a function, sets an end-of-line comment, or adds or
+removes a Note bookmark. Ghidra makes the edit in its own transaction, saves the
+project, decompiles again every function whose C shows a new name, and answers
+with what changed, or with its reason for refusing the edit. The adapter writes
+those changes into the binary's saved export too, so reopening it loads the
+edited program without Ghidra. Dropping or closing
+the session closes its connection, and Ghidra exits. Ghidra's output for the
+session goes to `session.log` beside the project.
+
+rêve listens on a loopback port that `Serve.java` connects back to. Before
+anything else, the script sends a random token only the adapter knows, so no
+other local program can drive Ghidra.
+
+`cargo test -p reve-ghidra-adapter -- --ignored` runs a session on a real
+binary with the Ghidra that `scripts/bootstrap.py` installs. It takes about a
+minute.
+
+## Test the exporter
+
+`developer_scripts/` isn't packaged into the extension. Run these commands from
+`ghidra-extension/`, with a JDK on your `PATH`.
+
+`DecompilerPoolTest` needs no Ghidra, and CI runs it:
+
+```sh
+javac -d /tmp/decompiler-pool ghidra_scripts/DecompilerPool.java developer_scripts/DecompilerPoolTest.java
+java -cp /tmp/decompiler-pool DecompilerPoolTest
+```
+
+`ExportFaultTest` makes one decompilation throw, then checks that the export
+keeps every other function and all instructions. It needs real Ghidra, so CI
+doesn't run it. Ghidra compiles each script directory on its own, so the test
+needs a directory that also holds the scripts it extends:
+
+```sh
+scripts=$(mktemp -d)
+cp ghidra_scripts/Export.java ghidra_scripts/DecompilerPool.java developer_scripts/ExportFaultTest.java "$scripts"
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$(mktemp -d)" Test -import <binary> \
+  -scriptPath "$scripts" -postScript ExportFaultTest.java "$(mktemp -d)/out.pb"
+```
+
+It passes when the log prints `EXPORT_FAULT_OK`.
 
 Generated Java files, downloaded dependencies, Gradle caches, and the packaged
 extension are build artifacts; do not edit or commit them. The Rust adapter
