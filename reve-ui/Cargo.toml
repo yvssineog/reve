@@ -9,7 +9,7 @@ publish = false
 gpui-kit = "0.8.1"
 # GPUI already builds these; the logo uses them directly.
 image = { version = "0.25", default-features = false }
-resvg = { version = "0.46", default-features = false }
+resvg = { version = "0.49", default-features = false }
 reve-ghidra-adapter = { path = "../reve-engine/ghidra-adapter" }
 reve-model = { path = "../reve-engine/model" }
 
